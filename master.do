@@ -17,7 +17,7 @@ set more off
 *--------------------------------------------------------------*
 * 1. Root path: edit this line only
 *--------------------------------------------------------------*
-global root "/Users/kk/Documents/GitHub/paper1_ypgs"
+global root "/Users/kk/Desktop/GitHub/paper1_ypgs"
 
 *--------------------------------------------------------------*
 * 2. Relative paths: do not edit
