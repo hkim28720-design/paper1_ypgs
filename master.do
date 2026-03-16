@@ -14,7 +14,7 @@ set more off
 * 1. ROOT PATH — edit this line only
 *--------------------------------------------------------------
 * GitHub Desktop default clone location on macOS:
-global root "/Users/kk/Documents/GitHub/paper1_ypgs"
+global root "/Users/kk/Desktop/ypgs"
 
 * Co-author or referee would change to their own path, e.g.:
 * global root "/Users/newall/Projects/paper1_ypgs"
@@ -41,11 +41,11 @@ cap mkdir "${logs}"
 *--------------------------------------------------------------
 * 3. RUN PIPELINE
 *--------------------------------------------------------------
-do "${dofiles}/00_clean_ypgs2022.do"
-do "${dofiles}/00_clean_ypgs2023.do"
-do "${dofiles}/00_clean_ypgs2024.do"
-do "${dofiles}/01_pool_1_append.do"
-do "${dofiles}/01_pool_2_dsm.do"
-do "${dofiles}/01_pool_3_motives.do"
-do "${dofiles}/01_pool_4_groups.do"
-do "${dofiles}/02_analysis_main.do"
+do "${dofiles}/00_clean_ypgs2022_1.do"
+do "${dofiles}/00_clean_ypgs2023_2.do"
+do "${dofiles}/00_clean_ypgs2024_3.do"
+do "${dofiles}/01_pool_ypgs_2022_2024_1.do"
+do "${dofiles}/01_pool_ypgs_2022_2024_2.do"
+do "${dofiles}/01_pool_ypgs_2022_2024_3.do"
+do "${dofiles}/01_pool_ypgs_2022_2024_4.do"
+do "${dofiles}/Analysis_main.do"
