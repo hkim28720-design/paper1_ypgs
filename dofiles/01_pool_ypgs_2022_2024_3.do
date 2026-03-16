@@ -11,7 +11,6 @@
 *-------------------------------------------------------------------------------
 * 0. Set up
 *-------------------------------------------------------------------------------
-cd "/Users/kk/Desktop/Paper_1_main/Data/Processed"
 version 18.0
 clear all
 set more off
@@ -19,7 +18,7 @@ set more off
 *-------------------------------------------------------------------------------
 * 1. Import Pool 2022–2024 repeated cross-sections
 *-------------------------------------------------------------------------------
-use "ypgs_2022_2024_pooled.dta", clear
+use "${processed}/ypgs_2022_2024_pooled.dta", clear
 
 * quick QA: wave sizes
 tab survey_year
@@ -324,6 +323,7 @@ label var Motive1 "Monetary factor and quick fix to problem factor"
 gen Motive2 = .
 replace Motive2 = 1 if (F3==1 | F6==1 | F7==1) & problem1==1
 replace Motive2 = 0 if Motive2==. & problem1==1   // only for asked respondents
+label var Motive2 "Entertainment factor (seeking pleasure, fun or excitement)"
 
 *gen Motive2 = 0
 *replace Motive2 = 1 if F3==1 | F6==1 | F7==1 
@@ -361,8 +361,7 @@ label var Motive5 "Boredom (gambling as a means to esccape the monotomy of one's
 *-------------------------------------------------------------------------------
 * 7. Save pooled dataset
 *-------------------------------------------------------------------------------
-save "ypgs_2022_2024_pooled.dta", replace
-
+save "${processed}/ypgs_2022_2024_pooled.dta", replace
 
 ****************************************************************************************
 * End of 03_pool_ypgs_2022_2024.do

@@ -22,7 +22,7 @@ set linesize 120
 ***Paths
 *-------------------------------------------------------------------------------
 *file directory
-cd "/Users/kk/Desktop/Paper_1_main/Data/Processed"
+use "${processed}/ypgs_2022_2024_pooled.dta", clear
 
 *store log file
 global log "log"
@@ -570,6 +570,12 @@ label values g_combo g_combo
 reg dsm_total ib1.g_combo i.survey_year if samp_main==1, vce(robust)
 */
 
+
+*--------------------------------------------------------------*
+* 5) Save
+*--------------------------------------------------------------*
+
+save "${processed}/ypgs_2022_2024_pooled.dta", replace
 
 *log close 
 *===============================================================================

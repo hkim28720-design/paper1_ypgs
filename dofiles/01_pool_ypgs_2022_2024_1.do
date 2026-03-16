@@ -12,29 +12,19 @@ clear all
 set more off
 
 *---------------------------------------------------------------*
-* 0. set up
+* 0. set up — no cd needed; globals set in master.do
 *---------------------------------------------------------------*
-
-cd "/Users/kk/Desktop/Paper_1_main/Data/Processed"
-
 
 *---------------------------------------------------------------*
 * 1. importing 2022 
 *---------------------------------------------------------------*
-
-use "ypgs2022_clean.dta", clear
-
-describe Exactage gender Ethnicity region imd famgam ///
-         survey_year
-
+use "${processed}/ypgs2022_clean.dta", clear
 
 *---------------------------------------------------------------*
 * 2. append 2023, 2024
 *---------------------------------------------------------------*
-
-append using "ypgs2023_clean.dta"
-
-append using "ypgs2024_clean.dta"
+append using "${processed}/ypgs2023_clean.dta"
+append using "${processed}/ypgs2024_clean.dta"
 
 *---------------------------------------------------------------*
 * 3. Rescale weights so each wave contributes equally to the pooled sample
@@ -75,7 +65,7 @@ describe Exactage gender Ethnicity region imd famgam ///
 * 5. save dataset
 *---------------------------------------------------------------*
 
-save "ypgs_2022_2024_pooled.dta", replace
+save "${processed}/ypgs_2022_2024_pooled.dta", replace
 
 ****************************************************************************************
 * End of 01_pool_ypgs_2022_2024.do

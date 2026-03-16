@@ -17,8 +17,8 @@ clear all
 set more off
 
 * Set up
-cd "/Users/kk/Desktop/Paper_1_main/Data/Processed"
-use "ypgs_2022_2024_pooled.dta", clear
+* Set up
+use "${processed}/ypgs_2022_2024_pooled.dta", clear
 
 *-------------------------------*
 * 0) recode '-99' to missing 
@@ -128,8 +128,7 @@ assert missing(dsm_cat)   if problem1==0
 *-------------------------------*
 * 4) Save data
 *-------------------------------*
-save "ypgs_2022_2024_pooled.dta", replace
-
+save "${processed}/ypgs_2022_2024_pooled.dta", replace
 
 ****************************************************************************************
 * End
