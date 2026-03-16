@@ -15,10 +15,7 @@ set more off
 * 0. set up
 *---------------------------------------------------------------*
 
-cd "/Users/kk/Desktop/Paper_1_main/Data/Processed"
-
-use "ypgs2023.dta", clear
-
+use "${raw}/ypgs2023.dta", clear
 
 *---------------------------------------------------------------*
 * 1. raw variable inspection 
@@ -282,7 +279,7 @@ describe fruittype1 fruittype2 fruittype3 fruittype4 ///
 generate survey_year = 2023
 label var survey_year "YPGS survey year (2023 wave)"
 
-save "ypgs2023_clean.dta", replace
+save "${processed}/ypgs2023_clean.dta", replace
 
 ****************************************************************************************
 * End of 00_clean_ypgs2023.do

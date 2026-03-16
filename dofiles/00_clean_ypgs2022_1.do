@@ -15,11 +15,7 @@ set more off
 * 0. set up
 *---------------------------------------------------------------*
 
-cd "/Users/kk/Desktop/Paper_1_main/Data/Processed"
-
-* import 2022ygps data
-use "ypgs2022.dta", clear
-
+use "${raw}/ypgs2022.dta", clear
 
 *---------------------------------------------------------------*
 * 1. raw variable inspection 
@@ -262,7 +258,7 @@ generate survey_year = 2022
 label var survey_year "YPGS survey year (2022 wave)"
 
 * save cleaned dataset
-save "ypgs2022_clean.dta", replace
+save "${processed}/ypgs2022_clean.dta", replace
 
 ****************************************************************************************
 * End of 00_clean_ypgs2022.do

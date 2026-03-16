@@ -15,10 +15,7 @@ set more off
 * 0. set up
 *---------------------------------------------------------------*
 
-cd "/Users/kk/Desktop/Paper_1_main/Data/Processed"
-
-use "ypgs2024.dta", clear
-
+use "${raw}/ypgs2024.dta", clear
 
 *---------------------------------------------------------------*
 * 1. raw variable inspection 
@@ -113,7 +110,7 @@ rename weight0			survey_weight
 generate survey_year = 2024
 label var survey_year "YPGS survey year (2024 wave)"
 
-save "ypgs2024_clean.dta", replace
+save "${processed}/ypgs2024_clean.dta", replace
 
 ****************************************************************************************
 * End of 00_clean_ypgs2024.do
