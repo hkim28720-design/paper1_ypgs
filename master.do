@@ -37,7 +37,7 @@ cap mkdir "${tables}"
 cap mkdir "${figures}"
 cap mkdir "${logs}"
 
-log using "${logs}/master.log", replace text
+*log using "${logs}/master.log", replace text
 
 *--------------------------------------------------------------*
 * 3. Run cleaning
@@ -59,5 +59,5 @@ do "${dofiles}/04_construct_groups.do"
 *--------------------------------------------------------------*
 do "${dofiles}/05_analysis_main.do"
 
-log close
+*log close
 display "Pipeline completed successfully."

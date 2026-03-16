@@ -1,583 +1,723 @@
 /*******************************************************************************
 Project: Family, Motivation and Harm
-Data: YPGS 2022 and 2023
-Do file name: revision
+Data: YPGS 2022–2024 pooled from common comparable population
+Do file name: 05_analysis_main.do
 Authors: Kim, Stowasser, Newall
-Date created: 10 Feb 2026
-Date edited: 10 Feb 2026
+Date created: 16 Mar 2026
 Version: 1
-Note: 
+
+Purpose:
+- Build the 2022–2024 common-sample analytic file
+- Use existing equal-wave pooled weights from the pooled file
+- Define analysis samples for participation and harm models
+- Run main descriptive statistics and regression models
+
+Key design choices:
+- Restrict to survey_year 2022, 2023, and 2024
+- Restrict to samp_common == 1
+- Use survey_weight_pool for pooled weighted analysis
+- RQ1 uses gamblers with complete covariates, motives, and group flags
+- RQ2–RQ5 use gamblers with observed DSM outcomes plus complete covariates
+- In nonlinear models, interpret interactions via margins, not raw coefficients
 *******************************************************************************/
 
 *-------------------------------------------------------------------------------
-***Set up
+* 0. Set up
 *-------------------------------------------------------------------------------
-
 version 18
-clear all
+clear
 set more off
 set linesize 120
 
+* Optional log
+* cap mkdir "log"
+* log using "log/05_analysis_main.log", replace text
+
 *-------------------------------------------------------------------------------
-***Paths
+* 1. Confirm pooled file exists and load data
 *-------------------------------------------------------------------------------
-*file directory
+capture confirm file "${processed}/ypgs_2022_2024_pooled.dta"
+if _rc != 0 {
+    di as error "File not found: ${processed}/ypgs_2022_2024_pooled.dta"
+    exit 601
+}
+
 use "${processed}/ypgs_2022_2024_pooled.dta", clear
 
-*store log file
-global log "log"
-cap mkdir "log"
-cap mkdir "out"
-cap mkdir "fig"
+*-------------------------------------------------------------------------------
+* 2. Restrict to analysis years and common comparable population
+*-------------------------------------------------------------------------------
+keep if inlist(survey_year, 2022, 2023, 2024)
+keep if samp_common == 1
 
-*log using "log/revision.log", replace text
-
-
-*Load 2022–2024 RCS 
-use "ypgs_2022_2024_pooled.dta", clear
-*trim data for 2022 and 2023
-keep if inlist(survey_year, 2022, 2023)
-
-
+assert inlist(survey_year, 2022, 2023, 2024)
+assert samp_common == 1
 
 *-------------------------------------------------------------------------------
-***keep variables of interest
+* 3. Check existing pooled weight
 *-------------------------------------------------------------------------------
+assert !missing(survey_weight_pool)
+assert survey_weight_pool > 0 if !missing(survey_weight_pool)
 
-keep survey_year problem1 ///
+bysort survey_year: egen double check_w = total(survey_weight_pool)
+tabstat check_w, by(survey_year) stat(mean)
+drop check_w
+
+egen double total_w = total(survey_weight_pool)
+summarize total_w
+drop total_w
+
+*-------------------------------------------------------------------------------
+* 4. Keep variables used in main analysis
+*-------------------------------------------------------------------------------
+keep survey_year samp_common problem1 ///
+     group_complete3 n_any_groups ///
+     g0_me g1_me g2_me g3_me multi ///
      g1_any g2_any g3_any ///
-     g1_me  g2_me  g3_me  ///
-     dsm_total dsm_cat ///
-	 Exactage gender Ethnicity imd ///
+     dsm_total dsm_cat dsm_complete9 ///
+     Exactage gender Ethnicity imd ///
      famgam adultcaresx ///
      Motive1 Motive2 Motive3 Motive4 Motive5 ///
-	 survey_weight
+     survey_weight survey_weight_pool
 
 *-------------------------------------------------------------------------------
-***a bit of coding changes
+* 5. Recode / relabel covariates for analysis
 *-------------------------------------------------------------------------------
 
-*adultcaresx note: 6 "Don't know"; 7 "Prefer not to say" 8 "Not stated"
-recode adultcaresx (6=.)(7=.)(8=.) 
-
-*gender note: 3 "In another way"; 4 "Prefer not to say"
-recode gender (3=.) (4=.)
-
-*famgam note: 3 "Don't Know"; 4 "Prefer not to say"; 5 "Not stated"
-recode famgam (3=.) (4=.) (5=.) 
-*famgam note: orginal 1 "Yes"; 2 "No"
-recode famgam (1=1) (2=0)
-
-*Ethnicity note: 5 "Other"; 6 "Prefer not to say"
-recode Ethnicity (5=.) (6=.)
-
-
-*-------------------------------------------------------------------------------
-*construct samples for analysis: include only gamblers 
-*-------------------------------------------------------------------------------
-
-gen byte samp_dsm = (problem1==1) & !missing(dsm_total)
 capture label list LB_YN
-if _rc label define LB_YN 0 "No" 1 "Yes"
+if _rc != 0 {
+    label define LB_YN 0 "No" 1 "Yes"
+}
+
+* adultcaresx:
+* 1 Very well, 2 Fairly well, 3 Not very well, 4 Not at all, 5 No adult at home,
+* 6 Don't know, 7 Prefer not to say, 8 Not stated
+recode adultcaresx (6=.) (7=.) (8=.)
+label var adultcaresx "Adult care score (higher = less care / support)"
+
+* gender:
+* keep substantive categories; drop explicit nonresponse only
+* 1 boy, 2 girl, 3 in another way, 4 prefer not to say
+recode gender (4=.)
+label var gender "Gender"
+
+* family gambling exposure:
+* 1 yes, 2 no, 3 don't know, 4 prefer not to say, 5 not stated
+capture drop famgam_yes
+generate byte famgam_yes = .
+replace famgam_yes = 1 if famgam == 1
+replace famgam_yes = 0 if famgam == 2
+label values famgam_yes LB_YN
+label var famgam_yes "Family gambling exposure"
+
+* Ethnicity:
+* keep substantive categories; drop explicit nonresponse only
+* do NOT drop "Other"
+recode Ethnicity (6=.)
+label var Ethnicity "Ethnicity"
+
+*-------------------------------------------------------------------------------
+* 6. Sample definitions
+*-------------------------------------------------------------------------------
+
+* DSM-observed gambler sample
+capture drop samp_dsm
+generate byte samp_dsm = (problem1 == 1) & !missing(dsm_total)
 label values samp_dsm LB_YN
-label var samp_dsm "DSM-asked sample (problem1==1 & dsm_total observed)"
+label var samp_dsm "Gamblers with observed DSM total"
 
-assert missing(dsm_total) if problem1==0   // routing check 
-assert problem1==1 if !missing(dsm_total)
+* RQ1 sample:
+* gamblers only, no conditioning on DSM observability
+capture drop samp_rq1
+generate byte samp_rq1 = (problem1 == 1) ///
+    & !missing(Exactage, gender, Ethnicity, imd, famgam_yes, adultcaresx, ///
+               Motive1, Motive2, Motive3, Motive4, Motive5, ///
+               g1_any, g2_any, g3_any, survey_weight_pool)
+label values samp_rq1 LB_YN
+label var samp_rq1 "RQ1 sample: gamblers with complete covariates, motives, and group flags"
 
+* Main harm-regression sample:
+* DSM-complete gamblers only
+capture drop samp_main
+generate byte samp_main = (problem1 == 1) & !missing(dsm_total, dsm_cat) ///
+    & !missing(Exactage, gender, Ethnicity, imd, famgam_yes, adultcaresx, ///
+               Motive1, Motive2, Motive3, Motive4, Motive5, ///
+               g1_any, g2_any, g3_any, survey_weight_pool)
+label values samp_main LB_YN
+label var samp_main "Main analytic sample: DSM-complete gamblers with complete covariates"
 
-*Sample definitions
-gen byte samp_main = samp_dsm==1 ///
-  & !missing(Exactage, gender, Ethnicity, imd, famgam, adultcaresx, ///
-             Motive1, Motive2, Motive3, Motive4, Motive5, ///
-             g1_any, g2_any, g3_any)
+* Ordered-outcome sample
+capture drop samp_ord
+generate byte samp_ord = samp_main == 1 & !missing(dsm_cat)
+label values samp_ord LB_YN
+label var samp_ord "Ordered-outcome sample"
 
-label var samp_main "Main analytic sample (DSM-asked; complete-case on covariates + motives)"
+* Routing checks
+assert missing(dsm_total) if problem1 == 0
+assert missing(dsm_cat)   if problem1 == 0
+assert problem1 == 1 if !missing(dsm_total)
+assert problem1 == 1 if !missing(dsm_cat)
 
-/*not conditioning on DSM observed
-gen byte samp_rq1 = (problem1==1) ///
-  & !missing(Exactage, gender, Ethnicity, imd, famgam, adultcaresx, ///
-             Motive1, Motive2, Motive3, Motive4, Motive5, ///
-             g1_any, g2_any, g3_any)
+* Sample counts
+count
+count if problem1 == 1
+count if samp_rq1 == 1
+count if samp_main == 1
 
-label var samp_rq1 "RQ1 sample (gamblers; complete-case covariates+motive; no DSM conditioning)"
-*/
-
-*-------------------------------------------------------------------------------
-***describe dataset (main analytic sample)
-*-------------------------------------------------------------------------------
-
-*2022: continuous/count/binary
-summ Exactage adultcaresx dsm_total g1_any g2_any g3_any g1_me g2_me g3_me ///
-    if samp_main==1 & survey_year==2022
-
-*2022: categorical distributions
-tab gender        if samp_main==1 & survey_year==2022, missing
-tab Ethnicity     if samp_main==1 & survey_year==2022, missing
-tab imd           if samp_main==1 & survey_year==2022, missing
-tab famgam        if samp_main==1 & survey_year==2022, missing
-tab adultcaresx   if samp_main==1 & survey_year==2022, missing
-tab Motive1       if samp_main==1 & survey_year==2022, missing
-tab Motive2       if samp_main==1 & survey_year==2022, missing
-tab Motive3       if samp_main==1 & survey_year==2022, missing
-tab Motive4       if samp_main==1 & survey_year==2022, missing
-tab Motive5       if samp_main==1 & survey_year==2022, missing
-
-*2023: continuous/count/binary 
-summ Exactage adultcaresx dsm_total g1_any g2_any g3_any g1_me g2_me g3_me ///
-    if samp_main==1 & survey_year==2023
-
-*2023: categorical distributions
-tab gender        if samp_main==1 & survey_year==2023, missing
-tab Ethnicity     if samp_main==1 & survey_year==2023, missing
-tab imd           if samp_main==1 & survey_year==2023, missing
-tab famgam        if samp_main==1 & survey_year==2023, missing
-tab adultcaresx   if samp_main==1 & survey_year==2023, missing
-tab Motive1       if samp_main==1 & survey_year==2023, missing
-tab Motive2       if samp_main==1 & survey_year==2023, missing
-tab Motive3       if samp_main==1 & survey_year==2023, missing
-tab Motive4       if samp_main==1 & survey_year==2023, missing
-tab Motive5       if samp_main==1 & survey_year==2023, missing
-
-*distribution for the outcome variable: DSM-IV-MR-J
-tab dsm_total if samp_main==1, missing
-summ dsm_total if samp_main==1, detail
+tab survey_year if samp_rq1 == 1, missing
+tab survey_year if samp_main == 1, missing
 
 *-------------------------------------------------------------------------------
-***RQ1 "who becomes which gambler"
+* 7. Save analysis-ready subset
+*-------------------------------------------------------------------------------
+save "${processed}/ypgs_2022_2024_common_analysis.dta", replace
+
+*-------------------------------------------------------------------------------
+* 8. Descriptive statistics
 *-------------------------------------------------------------------------------
 
-**Arcade group
-*spec (I): controlling for demographics 
-probit g1_any c.Exactage i.gender i.Ethnicity i.imd i.survey_year if samp_main==1, vce(robust)
+* Overall prevalence of own-money gambling by year
+proportion problem1 [pw=survey_weight_pool], over(survey_year)
+
+* Overall prevalence of own-money gambling by age
+proportion problem1 [pw=survey_weight_pool], over(Exactage)
+
+* Overlapping-group prevalence among gamblers in RQ1 sample
+mean g1_any g2_any g3_any [pw=survey_weight_pool] if samp_rq1 == 1, over(survey_year)
+
+* Overlap count among gamblers with complete group information
+tab n_any_groups if problem1 == 1 & group_complete3 == 1, missing
+tab n_any_groups if problem1 == 1 & group_complete3 == 1 & samp_common == 1, missing
+
+* Year-specific means in main sample
+mean Exactage adultcaresx dsm_total g1_any g2_any g3_any ///
+     g0_me g1_me g2_me g3_me multi ///
+     [pw=survey_weight_pool] if samp_main == 1, over(survey_year)
+
+* Year-specific categorical distributions in main sample
+tab gender      if samp_main == 1 & survey_year == 2022, missing
+tab Ethnicity   if samp_main == 1 & survey_year == 2022, missing
+tab imd         if samp_main == 1 & survey_year == 2022, missing
+tab famgam_yes  if samp_main == 1 & survey_year == 2022, missing
+tab adultcaresx if samp_main == 1 & survey_year == 2022, missing
+tab Motive1     if samp_main == 1 & survey_year == 2022, missing
+tab Motive2     if samp_main == 1 & survey_year == 2022, missing
+tab Motive3     if samp_main == 1 & survey_year == 2022, missing
+tab Motive4     if samp_main == 1 & survey_year == 2022, missing
+tab Motive5     if samp_main == 1 & survey_year == 2022, missing
+
+tab gender      if samp_main == 1 & survey_year == 2023, missing
+tab Ethnicity   if samp_main == 1 & survey_year == 2023, missing
+tab imd         if samp_main == 1 & survey_year == 2023, missing
+tab famgam_yes  if samp_main == 1 & survey_year == 2023, missing
+tab adultcaresx if samp_main == 1 & survey_year == 2023, missing
+tab Motive1     if samp_main == 1 & survey_year == 2023, missing
+tab Motive2     if samp_main == 1 & survey_year == 2023, missing
+tab Motive3     if samp_main == 1 & survey_year == 2023, missing
+tab Motive4     if samp_main == 1 & survey_year == 2023, missing
+tab Motive5     if samp_main == 1 & survey_year == 2023, missing
+
+tab gender      if samp_main == 1 & survey_year == 2024, missing
+tab Ethnicity   if samp_main == 1 & survey_year == 2024, missing
+tab imd         if samp_main == 1 & survey_year == 2024, missing
+tab famgam_yes  if samp_main == 1 & survey_year == 2024, missing
+tab adultcaresx if samp_main == 1 & survey_year == 2024, missing
+tab Motive1     if samp_main == 1 & survey_year == 2024, missing
+tab Motive2     if samp_main == 1 & survey_year == 2024, missing
+tab Motive3     if samp_main == 1 & survey_year == 2024, missing
+tab Motive4     if samp_main == 1 & survey_year == 2024, missing
+tab Motive5     if samp_main == 1 & survey_year == 2024, missing
+
+* Outcome distributions
+tab dsm_total if samp_main == 1, missing
+summarize dsm_total if samp_main == 1, detail
+mean dsm_total [pw=survey_weight_pool] if samp_main == 1
+
+tab dsm_cat if samp_ord == 1, missing
+
+*-------------------------------------------------------------------------------
+* 9. RQ1: Who becomes which gambler? (participation models)
+*     Overlapping groups modeled separately
+*     Use margins for interpretation
+*-------------------------------------------------------------------------------
+
+*-------------------
+* Arcade group
+*-------------------
+
+* Spec I: demographics
+probit g1_any c.Exactage i.gender i.Ethnicity i.imd i.survey_year ///
+    [pw=survey_weight_pool] if samp_rq1 == 1, vce(robust)
 margins, dydx(Exactage gender Ethnicity imd)
 
-*spec (II): controlling for enviroment 
-probit g1_any i.famgam c.adultcaresx i.survey_year if samp_main==1, vce(robust)
-margins, dydx(famgam adultcaresx )
+* Spec II: family environment
+probit g1_any i.famgam_yes c.adultcaresx i.survey_year ///
+    [pw=survey_weight_pool] if samp_rq1 == 1, vce(robust)
+margins, dydx(famgam_yes adultcaresx)
 
-*spec (III): controlling for motives
-probit g1_any i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year if samp_main==1, vce(robust)
+* Spec III: motives
+probit g1_any i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year ///
+    [pw=survey_weight_pool] if samp_rq1 == 1, vce(robust)
 margins, dydx(Motive1 Motive2 Motive3 Motive4 Motive5)
 
-*spec (IV): controlling all
-probit g1_any c.Exactage i.gender i.Ethnicity i.imd i.famgam c.adultcaresx i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year if samp_main==1, vce(robust)
-margins, dydx(Exactage famgam adultcaresx Motive1 Motive2 Motive3 Motive4 Motive5)
+* Spec IV: full model
+probit g1_any c.Exactage i.gender i.Ethnicity i.imd ///
+    i.famgam_yes c.adultcaresx ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) ///
+    i.survey_year [pw=survey_weight_pool] if samp_rq1 == 1, vce(robust)
+margins, dydx(Exactage famgam_yes adultcaresx Motive1 Motive2 Motive3 Motive4 Motive5)
+
+*-------------------
+* Informal-setting group
 *-------------------
 
-**Informal-setting gambler group
-*spec (I): controlling for demographics 
-probit g2_any c.Exactage i.gender i.Ethnicity i.imd i.survey_year if samp_main==1, vce(robust)
+* Spec I: demographics
+probit g2_any c.Exactage i.gender i.Ethnicity i.imd i.survey_year ///
+    [pw=survey_weight_pool] if samp_rq1 == 1, vce(robust)
 margins, dydx(Exactage gender Ethnicity imd)
 
-*spec (II): controlling for enviroment 
-probit g2_any i.famgam c.adultcaresx i.survey_year if samp_main==1, vce(robust)
-margins, dydx(famgam adultcaresx )
+* Spec II: family environment
+probit g2_any i.famgam_yes c.adultcaresx i.survey_year ///
+    [pw=survey_weight_pool] if samp_rq1 == 1, vce(robust)
+margins, dydx(famgam_yes adultcaresx)
 
-*spec (III): controlling for motives
-probit g2_any i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year if samp_main==1, vce(robust)
+* Spec III: motives
+probit g2_any i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year ///
+    [pw=survey_weight_pool] if samp_rq1 == 1, vce(robust)
 margins, dydx(Motive1 Motive2 Motive3 Motive4 Motive5)
 
-*spec (IV): controlling all
-probit g2_any c.Exactage i.gender i.Ethnicity i.imd i.famgam c.adultcaresx i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year if samp_main==1, vce(robust)
-margins, dydx(Exactage famgam adultcaresx Motive1 Motive2 Motive3 Motive4 Motive5)
+* Spec IV: full model
+probit g2_any c.Exactage i.gender i.Ethnicity i.imd ///
+    i.famgam_yes c.adultcaresx ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) ///
+    i.survey_year [pw=survey_weight_pool] if samp_rq1 == 1, vce(robust)
+margins, dydx(Exactage famgam_yes adultcaresx Motive1 Motive2 Motive3 Motive4 Motive5)
+
+*-------------------
+* Regulated-setting group
 *-------------------
 
-**regulated-setting gambler group
-*spec (I): controlling for demographics 
-probit g3_any c.Exactage i.gender i.Ethnicity i.imd i.survey_year if samp_main==1, vce(robust)
+* Spec I: demographics
+probit g3_any c.Exactage i.gender i.Ethnicity i.imd i.survey_year ///
+    [pw=survey_weight_pool] if samp_rq1 == 1, vce(robust)
 margins, dydx(Exactage gender Ethnicity imd)
 
-*spec (II): controlling for enviroment 
-probit g3_any i.famgam c.adultcaresx i.survey_year if samp_main==1, vce(robust)
-margins, dydx(famgam adultcaresx )
+* Spec II: family environment
+probit g3_any i.famgam_yes c.adultcaresx i.survey_year ///
+    [pw=survey_weight_pool] if samp_rq1 == 1, vce(robust)
+margins, dydx(famgam_yes adultcaresx)
 
-*spec (III): controlling for motives
-probit g3_any i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year if samp_main==1, vce(robust)
+* Spec III: motives
+probit g3_any i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year ///
+    [pw=survey_weight_pool] if samp_rq1 == 1, vce(robust)
 margins, dydx(Motive1 Motive2 Motive3 Motive4 Motive5)
 
-*spec (IV): controlling all
-probit g3_any c.Exactage i.gender i.Ethnicity i.imd i.famgam c.adultcaresx i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year if samp_main==1, vce(robust)
-margins, dydx(Exactage famgam adultcaresx Motive1 Motive2 Motive3 Motive4 Motive5)
-
+* Spec IV: full model
+probit g3_any c.Exactage i.gender i.Ethnicity i.imd ///
+    i.famgam_yes c.adultcaresx ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) ///
+    i.survey_year [pw=survey_weight_pool] if samp_rq1 == 1, vce(robust)
+margins, dydx(Exactage famgam_yes adultcaresx Motive1 Motive2 Motive3 Motive4 Motive5)
 
 *-------------------------------------------------------------------------------
-*RQ2: HARM REGRESSIONS (DSM-asked sample): dsm_total
-*     Specs I–V; OLS (robust) + NBREG (robust)
+* 10. RQ2: Harm regressions (DSM-complete gambler sample)
+*      Outcome: dsm_total
+*      Models: OLS and NBREG
 *-------------------------------------------------------------------------------
 
-**OLS
-*spec (I): no controls
-reg dsm_total i.g1_any i.g2_any i.g3_any i.survey_year if samp_main==1, vce(robust)
-
-*spec (II): controlling for demographics 
-reg dsm_total i.g1_any i.g2_any i.g3_any c.Exactage i.gender i.Ethnicity i.imd i.survey_year if samp_main==1, vce(robust)
-
-*spec (II): controlling for enviroment 
-reg dsm_total i.g1_any i.g2_any i.g3_any i.famgam c.adultcaresx i.survey_year if samp_main==1, vce(robust)
-
-*spec (III): controlling for motives 
-reg dsm_total i.g1_any i.g2_any i.g3_any i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year if samp_main==1, vce(robust)
-
-*spec (IV): controlling for all 
-reg dsm_total i.g1_any i.g2_any i.g3_any c.Exactage i.gender i.Ethnicity i.imd ///
-    i.famgam c.adultcaresx i.(Motive1 Motive2 Motive3 Motive4 Motive5) ///
-    i.survey_year if samp_main==1, vce(robust)
+*-------------------
+* OLS
 *-------------------
 
+* Spec I: no controls
+reg dsm_total i.g1_any i.g2_any i.g3_any i.survey_year ///
+    [pw=survey_weight_pool] if samp_main == 1, vce(robust)
 
-**count data model
-*spec (I): no controls
- nbreg dsm_total i.g1_any i.g2_any i.g3_any i.survey_year if samp_main==1, vce(robust)
-margins, dydx(g1_any g2_any g3_any)
+* Spec II: demographics
+reg dsm_total i.g1_any i.g2_any i.g3_any ///
+    c.Exactage i.gender i.Ethnicity i.imd i.survey_year ///
+    [pw=survey_weight_pool] if samp_main == 1, vce(robust)
 
-*spec (II): controlling for demographics 
- nbreg dsm_total i.g1_any i.g2_any i.g3_any c.Exactage i.gender i.Ethnicity i.imd i.survey_year if samp_main==1, vce(robust)
-margins, dydx(g1_any g2_any g3_any)
+* Spec III: family environment
+reg dsm_total i.g1_any i.g2_any i.g3_any ///
+    i.famgam_yes c.adultcaresx i.survey_year ///
+    [pw=survey_weight_pool] if samp_main == 1, vce(robust)
 
-*spec (II): controlling for enviroment 
- nbreg dsm_total i.g1_any i.g2_any i.g3_any i.famgam c.adultcaresx i.survey_year if samp_main==1, vce(robust)
-margins, dydx(g1_any g2_any g3_any)
+* Spec IV: motives
+reg dsm_total i.g1_any i.g2_any i.g3_any ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year ///
+    [pw=survey_weight_pool] if samp_main == 1, vce(robust)
 
-*spec (III): controlling for motives 
- nbreg dsm_total i.g1_any i.g2_any i.g3_any i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year if samp_main==1, vce(robust)
-margins, dydx(g1_any g2_any g3_any)
+* Spec V: full model
+reg dsm_total i.g1_any i.g2_any i.g3_any ///
+    c.Exactage i.gender i.Ethnicity i.imd ///
+    i.famgam_yes c.adultcaresx ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) ///
+    i.survey_year [pw=survey_weight_pool] if samp_main == 1, vce(robust)
 
-*spec (IV): controlling for all 
- nbreg dsm_total i.g1_any i.g2_any i.g3_any c.Exactage i.gender i.Ethnicity i.imd i.famgam c.adultcaresx i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year if samp_main==1, vce(robust)
-margins, dydx(g1_any g2_any g3_any)
-
-
-*-------------------------------------------------------------------------------
-*RQ3: MODERATION: (g1/g2/g3) × FAMILY GAMBLING EXPOSURE (famgam_yes)
-*     Specs I–III; OLS (robust) + NBREG (robust)
-*-------------------------------------------------------------------------------
-**OLS
-*spec (I): Arcade
-reg dsm_total i.g1_any##i.famgam  c.Exactage i.gender i.Ethnicity i.imd c.adultcaresx i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year if samp_main==1, vce(robust)
-
-*spec (II): Informal-setting 
-reg dsm_total i.g2_any##i.famgam  c.Exactage i.gender i.Ethnicity i.imd c.adultcaresx i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year if samp_main==1, vce(robust)
-
-*spec (III): regulated-setting 
-reg dsm_total i.g3_any##i.famgam  c.Exactage i.gender i.Ethnicity i.imd c.adultcaresx i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year if samp_main==1, vce(robust)
+*-------------------
+* Negative binomial
+* Interpret via margins on expected count scale
 *-------------------
 
-**NBREG
-*spec (I): Arcade × famgam
-nbreg dsm_total i.g1_any##i.famgam c.Exactage i.gender i.Ethnicity i.imd c.adultcaresx ///
-    i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year if samp_main==1, vce(robust)
-margins famgam, dydx(g1_any)
-marginsplot
+* Spec I: no controls
+nbreg dsm_total i.g1_any i.g2_any i.g3_any i.survey_year ///
+    [pw=survey_weight_pool] if samp_main == 1, vce(robust)
+margins, dydx(g1_any g2_any g3_any)
 
+* Spec II: demographics
+nbreg dsm_total i.g1_any i.g2_any i.g3_any ///
+    c.Exactage i.gender i.Ethnicity i.imd i.survey_year ///
+    [pw=survey_weight_pool] if samp_main == 1, vce(robust)
+margins, dydx(g1_any g2_any g3_any)
 
-*spec (II): Informal × famgam
-nbreg dsm_total i.g2_any##i.famgam c.Exactage i.gender i.Ethnicity i.imd c.adultcaresx ///
-    i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year if samp_main==1, vce(robust)
-margins famgam, dydx(g2_any)
-marginsplot
+* Spec III: family environment
+nbreg dsm_total i.g1_any i.g2_any i.g3_any ///
+    i.famgam_yes c.adultcaresx i.survey_year ///
+    [pw=survey_weight_pool] if samp_main == 1, vce(robust)
+margins, dydx(g1_any g2_any g3_any)
 
-*spec (III): regulated × famgam
-nbreg dsm_total i.g3_any##i.famgam c.Exactage i.gender i.Ethnicity i.imd c.adultcaresx ///
-    i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year if samp_main==1, vce(robust)
-margins famgam, dydx(g3_any)
-marginsplot
+* Spec IV: motives
+nbreg dsm_total i.g1_any i.g2_any i.g3_any ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year ///
+    [pw=survey_weight_pool] if samp_main == 1, vce(robust)
+margins, dydx(g1_any g2_any g3_any)
 
+* Spec V: full model
+nbreg dsm_total i.g1_any i.g2_any i.g3_any ///
+    c.Exactage i.gender i.Ethnicity i.imd ///
+    i.famgam_yes c.adultcaresx ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) ///
+    i.survey_year [pw=survey_weight_pool] if samp_main == 1, vce(robust)
+margins, dydx(g1_any g2_any g3_any)
 
 *-------------------------------------------------------------------------------
-*RQ3: MODERATION: (g1/g2/g3) × ADULT CARE (adultcare_continuous)
-*     Specs I–III; OLS (robust) + NBREG (robust)
+* 11. RQ3: Moderation by family gambling exposure
+*      Nonlinear interactions interpreted via margins
 *-------------------------------------------------------------------------------
-**OLS
-*spec (I): Arcade
-reg dsm_total i.g1_any##c.adultcaresx c.Exactage i.gender i.Ethnicity i.imd i.famgam i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year if samp_main==1, vce(robust)
 
-*spec (II): Informal-setting 
-reg dsm_total i.g2_any##c.adultcaresx c.Exactage i.gender i.Ethnicity i.imd i.famgam i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year if samp_main==1, vce(robust)
-
-*spec (III): regulated-setting 
-reg dsm_total i.g3_any##c.adultcaresx c.Exactage i.gender i.Ethnicity i.imd i.famgam i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year if samp_main==1, vce(robust)
+*-------------------
+* OLS
 *-------------------
 
+* Arcade x family gambling
+reg dsm_total i.g1_any##i.famgam_yes ///
+    c.Exactage i.gender i.Ethnicity i.imd c.adultcaresx ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year ///
+    [pw=survey_weight_pool] if samp_main == 1, vce(robust)
 
-**NBREG
-*spec (I): Arcade
-nbreg dsm_total i.g1_any##c.adultcaresx c.Exactage i.gender i.Ethnicity i.imd i.famgam i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year if samp_main==1, vce(robust)
+* Informal x family gambling
+reg dsm_total i.g2_any##i.famgam_yes ///
+    c.Exactage i.gender i.Ethnicity i.imd c.adultcaresx ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year ///
+    [pw=survey_weight_pool] if samp_main == 1, vce(robust)
+
+* Regulated x family gambling
+reg dsm_total i.g3_any##i.famgam_yes ///
+    c.Exactage i.gender i.Ethnicity i.imd c.adultcaresx ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year ///
+    [pw=survey_weight_pool] if samp_main == 1, vce(robust)
+
+*-------------------
+* Negative binomial
+*-------------------
+
+* Arcade x family gambling
+nbreg dsm_total i.g1_any##i.famgam_yes ///
+    c.Exactage i.gender i.Ethnicity i.imd c.adultcaresx ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year ///
+    [pw=survey_weight_pool] if samp_main == 1, vce(robust)
+margins famgam_yes, dydx(g1_any)
+
+* Informal x family gambling
+nbreg dsm_total i.g2_any##i.famgam_yes ///
+    c.Exactage i.gender i.Ethnicity i.imd c.adultcaresx ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year ///
+    [pw=survey_weight_pool] if samp_main == 1, vce(robust)
+margins famgam_yes, dydx(g2_any)
+
+* Regulated x family gambling
+nbreg dsm_total i.g3_any##i.famgam_yes ///
+    c.Exactage i.gender i.Ethnicity i.imd c.adultcaresx ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year ///
+    [pw=survey_weight_pool] if samp_main == 1, vce(robust)
+margins famgam_yes, dydx(g3_any)
+
+*-------------------------------------------------------------------------------
+* 12. RQ4: Moderation by adult care
+*-------------------------------------------------------------------------------
+
+*-------------------
+* OLS
+*-------------------
+
+* Arcade x adult care
+reg dsm_total i.g1_any##c.adultcaresx ///
+    c.Exactage i.gender i.Ethnicity i.imd i.famgam_yes ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year ///
+    [pw=survey_weight_pool] if samp_main == 1, vce(robust)
+
+* Informal x adult care
+reg dsm_total i.g2_any##c.adultcaresx ///
+    c.Exactage i.gender i.Ethnicity i.imd i.famgam_yes ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year ///
+    [pw=survey_weight_pool] if samp_main == 1, vce(robust)
+
+* Regulated x adult care
+reg dsm_total i.g3_any##c.adultcaresx ///
+    c.Exactage i.gender i.Ethnicity i.imd i.famgam_yes ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year ///
+    [pw=survey_weight_pool] if samp_main == 1, vce(robust)
+
+*-------------------
+* Negative binomial
+*-------------------
+
+* Arcade x adult care
+nbreg dsm_total i.g1_any##c.adultcaresx ///
+    c.Exactage i.gender i.Ethnicity i.imd i.famgam_yes ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year ///
+    [pw=survey_weight_pool] if samp_main == 1, vce(robust)
 margins, dydx(g1_any) at(adultcaresx=(1 2 3 4 5))
 
-*spec (II): Informal-setting 
-nbreg dsm_total i.g2_any##c.adultcaresx c.Exactage i.gender i.Ethnicity i.imd i.famgam i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year if samp_main==1, vce(robust)
+* Informal x adult care
+nbreg dsm_total i.g2_any##c.adultcaresx ///
+    c.Exactage i.gender i.Ethnicity i.imd i.famgam_yes ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year ///
+    [pw=survey_weight_pool] if samp_main == 1, vce(robust)
 margins, dydx(g2_any) at(adultcaresx=(1 2 3 4 5))
 
-*spec (III): regulated-setting 
-nbreg dsm_total i.g3_any##c.adultcaresx c.Exactage i.gender i.Ethnicity i.imd i.famgam i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year if samp_main==1, vce(robust)
+* Regulated x adult care
+nbreg dsm_total i.g3_any##c.adultcaresx ///
+    c.Exactage i.gender i.Ethnicity i.imd i.famgam_yes ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year ///
+    [pw=survey_weight_pool] if samp_main == 1, vce(robust)
 margins, dydx(g3_any) at(adultcaresx=(1 2 3 4 5))
 
 *-------------------------------------------------------------------------------
-*RQ4: MODERATION: (g1/g2/g3) × MOTIVES on DSM TOTAL
+* 13. RQ5: Moderation by motives on DSM total
+*      Run one interacted motive at a time for interpretability
 *-------------------------------------------------------------------------------
-**OLS
-*spec (I): Arcade
+
+*-------------------
+* OLS
+*-------------------
+
+* Arcade x motives
 reg dsm_total i.g1_any##i.(Motive1 Motive2 Motive3 Motive4 Motive5) ///
-    c.Exactage i.gender i.Ethnicity i.imd i.famgam c.adultcaresx i.survey_year ///
-    if samp_main==1, vce(robust)
+    c.Exactage i.gender i.Ethnicity i.imd i.famgam_yes c.adultcaresx i.survey_year ///
+    [pw=survey_weight_pool] if samp_main == 1, vce(robust)
 
-*spec (II): Informal-setting 
+* Informal x motives
 reg dsm_total i.g2_any##i.(Motive1 Motive2 Motive3 Motive4 Motive5) ///
-    c.Exactage i.gender i.Ethnicity i.imd i.famgam c.adultcaresx i.survey_year ///
-    if samp_main==1, vce(robust)
+    c.Exactage i.gender i.Ethnicity i.imd i.famgam_yes c.adultcaresx i.survey_year ///
+    [pw=survey_weight_pool] if samp_main == 1, vce(robust)
 
-*spec (III): regulated-setting 
+* Regulated x motives
 reg dsm_total i.g3_any##i.(Motive1 Motive2 Motive3 Motive4 Motive5) ///
-    c.Exactage i.gender i.Ethnicity i.imd i.famgam c.adultcaresx i.survey_year ///
-    if samp_main==1, vce(robust)
+    c.Exactage i.gender i.Ethnicity i.imd i.famgam_yes c.adultcaresx i.survey_year ///
+    [pw=survey_weight_pool] if samp_main == 1, vce(robust)
 
 *-------------------
+* Negative binomial
+* Interpret interactions using margins
 *-------------------
 
-**NBREG
-*spec (I): Arcade × Motive1
-
+* Arcade x Motive1
 nbreg dsm_total i.g1_any##i.Motive1 i.Motive2 i.Motive3 i.Motive4 i.Motive5 ///
-    c.Exactage i.gender i.Ethnicity i.imd i.famgam c.adultcaresx i.survey_year ///
-    if samp_main==1, vce(robust)
-
+    c.Exactage i.gender i.Ethnicity i.imd i.famgam_yes c.adultcaresx i.survey_year ///
+    [pw=survey_weight_pool] if samp_main == 1, vce(robust)
 margins Motive1, dydx(g1_any)
 
-
-*spec (II): Informal-setting 
+* Informal x Motive1
 nbreg dsm_total i.g2_any##i.Motive1 i.Motive2 i.Motive3 i.Motive4 i.Motive5 ///
-    c.Exactage i.gender i.Ethnicity i.imd i.famgam c.adultcaresx i.survey_year ///
-    if samp_main==1, vce(robust)
-
+    c.Exactage i.gender i.Ethnicity i.imd i.famgam_yes c.adultcaresx i.survey_year ///
+    [pw=survey_weight_pool] if samp_main == 1, vce(robust)
 margins Motive1, dydx(g2_any)
 
-*spec (III): regulated-setting 
+* Regulated x Motive1
 nbreg dsm_total i.g3_any##i.Motive1 i.Motive2 i.Motive3 i.Motive4 i.Motive5 ///
-    c.Exactage i.gender i.Ethnicity i.imd i.famgam c.adultcaresx i.survey_year ///
-    if samp_main==1, vce(robust)
-
+    c.Exactage i.gender i.Ethnicity i.imd i.famgam_yes c.adultcaresx i.survey_year ///
+    [pw=survey_weight_pool] if samp_main == 1, vce(robust)
 margins Motive1, dydx(g3_any)
-*-------------------
 
-**NBREG
-*spec (I): Arcade × Motive2
+* Arcade x Motive2
 nbreg dsm_total i.g1_any##i.Motive2 i.Motive1 i.Motive3 i.Motive4 i.Motive5 ///
-    c.Exactage i.gender i.Ethnicity i.imd i.famgam c.adultcaresx i.survey_year ///
-    if samp_main==1, vce(robust)
-
+    c.Exactage i.gender i.Ethnicity i.imd i.famgam_yes c.adultcaresx i.survey_year ///
+    [pw=survey_weight_pool] if samp_main == 1, vce(robust)
 margins Motive2, dydx(g1_any)
 
-
-*spec (II): Informal-setting 
+* Informal x Motive2
 nbreg dsm_total i.g2_any##i.Motive2 i.Motive1 i.Motive3 i.Motive4 i.Motive5 ///
-    c.Exactage i.gender i.Ethnicity i.imd i.famgam c.adultcaresx i.survey_year ///
-    if samp_main==1, vce(robust)
-
+    c.Exactage i.gender i.Ethnicity i.imd i.famgam_yes c.adultcaresx i.survey_year ///
+    [pw=survey_weight_pool] if samp_main == 1, vce(robust)
 margins Motive2, dydx(g2_any)
 
-*spec (III): regulated-setting 
+* Regulated x Motive2
 nbreg dsm_total i.g3_any##i.Motive2 i.Motive1 i.Motive3 i.Motive4 i.Motive5 ///
-    c.Exactage i.gender i.Ethnicity i.imd i.famgam c.adultcaresx i.survey_year ///
-    if samp_main==1, vce(robust)
-
+    c.Exactage i.gender i.Ethnicity i.imd i.famgam_yes c.adultcaresx i.survey_year ///
+    [pw=survey_weight_pool] if samp_main == 1, vce(robust)
 margins Motive2, dydx(g3_any)
-*-------------------
 
-**NBREG
-*spec (I): Arcade × Motive3
+* Arcade x Motive3
 nbreg dsm_total i.g1_any##i.Motive3 i.Motive1 i.Motive2 i.Motive4 i.Motive5 ///
-    c.Exactage i.gender i.Ethnicity i.imd i.famgam c.adultcaresx i.survey_year ///
-    if samp_main==1, vce(robust)
-
+    c.Exactage i.gender i.Ethnicity i.imd i.famgam_yes c.adultcaresx i.survey_year ///
+    [pw=survey_weight_pool] if samp_main == 1, vce(robust)
 margins Motive3, dydx(g1_any)
 
-
-*spec (II): Informal-setting 
+* Informal x Motive3
 nbreg dsm_total i.g2_any##i.Motive3 i.Motive1 i.Motive2 i.Motive4 i.Motive5 ///
-    c.Exactage i.gender i.Ethnicity i.imd i.famgam c.adultcaresx i.survey_year ///
-    if samp_main==1, vce(robust)
-
+    c.Exactage i.gender i.Ethnicity i.imd i.famgam_yes c.adultcaresx i.survey_year ///
+    [pw=survey_weight_pool] if samp_main == 1, vce(robust)
 margins Motive3, dydx(g2_any)
 
-*spec (III): regulated-setting 
+* Regulated x Motive3
 nbreg dsm_total i.g3_any##i.Motive3 i.Motive1 i.Motive2 i.Motive4 i.Motive5 ///
-    c.Exactage i.gender i.Ethnicity i.imd i.famgam c.adultcaresx i.survey_year ///
-    if samp_main==1, vce(robust)
-
+    c.Exactage i.gender i.Ethnicity i.imd i.famgam_yes c.adultcaresx i.survey_year ///
+    [pw=survey_weight_pool] if samp_main == 1, vce(robust)
 margins Motive3, dydx(g3_any)
-*-------------------
 
-**NBREG
-*spec (I): Arcade × Motive4
+* Arcade x Motive4
 nbreg dsm_total i.g1_any##i.Motive4 i.Motive1 i.Motive2 i.Motive3 i.Motive5 ///
-    c.Exactage i.gender i.Ethnicity i.imd i.famgam c.adultcaresx i.survey_year ///
-    if samp_main==1, vce(robust)
-
+    c.Exactage i.gender i.Ethnicity i.imd i.famgam_yes c.adultcaresx i.survey_year ///
+    [pw=survey_weight_pool] if samp_main == 1, vce(robust)
 margins Motive4, dydx(g1_any)
 
-
-*spec (II): Informal-setting 
+* Informal x Motive4
 nbreg dsm_total i.g2_any##i.Motive4 i.Motive1 i.Motive2 i.Motive3 i.Motive5 ///
-    c.Exactage i.gender i.Ethnicity i.imd i.famgam c.adultcaresx i.survey_year ///
-    if samp_main==1, vce(robust)
-
+    c.Exactage i.gender i.Ethnicity i.imd i.famgam_yes c.adultcaresx i.survey_year ///
+    [pw=survey_weight_pool] if samp_main == 1, vce(robust)
 margins Motive4, dydx(g2_any)
 
-*spec (III): regulated-setting 
+* Regulated x Motive4
 nbreg dsm_total i.g3_any##i.Motive4 i.Motive1 i.Motive2 i.Motive3 i.Motive5 ///
-    c.Exactage i.gender i.Ethnicity i.imd i.famgam c.adultcaresx i.survey_year ///
-    if samp_main==1, vce(robust)
-
+    c.Exactage i.gender i.Ethnicity i.imd i.famgam_yes c.adultcaresx i.survey_year ///
+    [pw=survey_weight_pool] if samp_main == 1, vce(robust)
 margins Motive4, dydx(g3_any)
-*-------------------
 
-**NBREG
-*spec (I): Arcade × Motive5
+* Arcade x Motive5
 nbreg dsm_total i.g1_any##i.Motive5 i.Motive1 i.Motive2 i.Motive3 i.Motive4 ///
-    c.Exactage i.gender i.Ethnicity i.imd i.famgam c.adultcaresx i.survey_year ///
-    if samp_main==1, vce(robust)
-
+    c.Exactage i.gender i.Ethnicity i.imd i.famgam_yes c.adultcaresx i.survey_year ///
+    [pw=survey_weight_pool] if samp_main == 1, vce(robust)
 margins Motive5, dydx(g1_any)
 
-
-*spec (II): Informal-setting 
+* Informal x Motive5
 nbreg dsm_total i.g2_any##i.Motive5 i.Motive1 i.Motive2 i.Motive3 i.Motive4 ///
-    c.Exactage i.gender i.Ethnicity i.imd i.famgam c.adultcaresx i.survey_year ///
-    if samp_main==1, vce(robust)
-
+    c.Exactage i.gender i.Ethnicity i.imd i.famgam_yes c.adultcaresx i.survey_year ///
+    [pw=survey_weight_pool] if samp_main == 1, vce(robust)
 margins Motive5, dydx(g2_any)
 
-*spec (III): regulated-setting 
+* Regulated x Motive5
 nbreg dsm_total i.g3_any##i.Motive5 i.Motive1 i.Motive2 i.Motive3 i.Motive4 ///
-    c.Exactage i.gender i.Ethnicity i.imd i.famgam c.adultcaresx i.survey_year ///
-    if samp_main==1, vce(robust)
-
+    c.Exactage i.gender i.Ethnicity i.imd i.famgam_yes c.adultcaresx i.survey_year ///
+    [pw=survey_weight_pool] if samp_main == 1, vce(robust)
 margins Motive5, dydx(g3_any)
+
+*-------------------------------------------------------------------------------
+* 14. Alternative outcome: ordered DSM category
+*      Interpret via category-specific predicted probabilities
+*-------------------------------------------------------------------------------
+
+tab dsm_cat if samp_ord == 1, missing
+
+*-------------------
+* Ordered probit
 *-------------------
 
-
-
-
-*-------------------------------------------------------------------------------
-*-------------------------------------------------------------------------------
-*Alternative outcome variable: g1/g2/g3 on DSM category
-*-------------------------------------------------------------------------------
-*-------------------------------------------------------------------------------
-
-
-tab dsm_cat, missing
-
-
-*spec (I): no controls
- oprobit dsm_cat i.g1_any i.g2_any i.g3_any i.survey_year if samp_main==1, vce(robust)
+* Spec I: no controls
+oprobit dsm_cat i.g1_any i.g2_any i.g3_any i.survey_year ///
+    [pw=survey_weight_pool] if samp_ord == 1, vce(robust)
 margins, dydx(g1_any g2_any g3_any) predict(outcome(0))
 margins, dydx(g1_any g2_any g3_any) predict(outcome(1))
 margins, dydx(g1_any g2_any g3_any) predict(outcome(2))
 
-*spec (II): controlling for demographics 
- oprobit dsm_cat i.g1_any i.g2_any i.g3_any c.Exactage i.gender i.Ethnicity i.imd i.survey_year if samp_main==1, vce(robust)
+* Spec II: demographics
+oprobit dsm_cat i.g1_any i.g2_any i.g3_any ///
+    c.Exactage i.gender i.Ethnicity i.imd i.survey_year ///
+    [pw=survey_weight_pool] if samp_ord == 1, vce(robust)
 margins, dydx(g1_any g2_any g3_any) predict(outcome(0))
 margins, dydx(g1_any g2_any g3_any) predict(outcome(1))
 margins, dydx(g1_any g2_any g3_any) predict(outcome(2))
 
-*spec (II): controlling for enviroment 
- oprobit dsm_cat i.g1_any i.g2_any i.g3_any i.famgam c.adultcaresx i.survey_year if samp_main==1, vce(robust)
+* Spec III: family environment
+oprobit dsm_cat i.g1_any i.g2_any i.g3_any ///
+    i.famgam_yes c.adultcaresx i.survey_year ///
+    [pw=survey_weight_pool] if samp_ord == 1, vce(robust)
 margins, dydx(g1_any g2_any g3_any) predict(outcome(0))
 margins, dydx(g1_any g2_any g3_any) predict(outcome(1))
 margins, dydx(g1_any g2_any g3_any) predict(outcome(2))
 
-*spec (III): controlling for motives 
- oprobit dsm_cat i.g1_any i.g2_any i.g3_any i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year if samp_main==1, vce(robust)
+* Spec IV: motives
+oprobit dsm_cat i.g1_any i.g2_any i.g3_any ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year ///
+    [pw=survey_weight_pool] if samp_ord == 1, vce(robust)
 margins, dydx(g1_any g2_any g3_any) predict(outcome(0))
 margins, dydx(g1_any g2_any g3_any) predict(outcome(1))
 margins, dydx(g1_any g2_any g3_any) predict(outcome(2))
 
-*spec (IV): controlling for all 
- oprobit dsm_cat i.g1_any i.g2_any i.g3_any c.Exactage i.gender i.Ethnicity i.imd i.famgam c.adultcaresx i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year if samp_main==1, vce(robust)
+* Spec V: full model
+oprobit dsm_cat i.g1_any i.g2_any i.g3_any ///
+    c.Exactage i.gender i.Ethnicity i.imd ///
+    i.famgam_yes c.adultcaresx ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) ///
+    i.survey_year [pw=survey_weight_pool] if samp_ord == 1, vce(robust)
 margins, dydx(g1_any g2_any g3_any) predict(outcome(0))
 margins, dydx(g1_any g2_any g3_any) predict(outcome(1))
 margins, dydx(g1_any g2_any g3_any) predict(outcome(2))
 
-
 *-------------------------------------------------------------------------------
-*-------------------------------------------------------------------------------
-*Alternative outcome variable: Moderation effects g1/g2/g3 * c.adultcaresx on DSM category
-*-------------------------------------------------------------------------------
+* 15. Alternative ordered outcome: moderation by adult care
+*      Again, interpret via margins, not raw interaction coefficients
 *-------------------------------------------------------------------------------
 
-*spec (I): no controls
-oprobit dsm_cat c.adultcaresx##(i.g1_any i.g2_any i.g3_any) i.survey_year if samp_main==1, vce(robust)
-
+* Spec I: no controls
+oprobit dsm_cat c.adultcaresx##(i.g1_any i.g2_any i.g3_any) i.survey_year ///
+    [pw=survey_weight_pool] if samp_ord == 1, vce(robust)
 margins, dydx(g1_any g2_any g3_any) at(adultcaresx=(1 2 3 4 5)) predict(outcome(0))
 margins, dydx(g1_any g2_any g3_any) at(adultcaresx=(1 2 3 4 5)) predict(outcome(1))
 margins, dydx(g1_any g2_any g3_any) at(adultcaresx=(1 2 3 4 5)) predict(outcome(2))
 
-*spec (II): controlling for demographics 
-oprobit dsm_cat c.adultcaresx##(i.g1_any i.g2_any i.g3_any) c.Exactage i.gender i.Ethnicity i.imd i.survey_year if samp_main==1, vce(robust)
+* Spec II: demographics
+oprobit dsm_cat c.adultcaresx##(i.g1_any i.g2_any i.g3_any) ///
+    c.Exactage i.gender i.Ethnicity i.imd i.survey_year ///
+    [pw=survey_weight_pool] if samp_ord == 1, vce(robust)
 margins, dydx(g1_any g2_any g3_any) at(adultcaresx=(1 2 3 4 5)) predict(outcome(0))
 margins, dydx(g1_any g2_any g3_any) at(adultcaresx=(1 2 3 4 5)) predict(outcome(1))
 margins, dydx(g1_any g2_any g3_any) at(adultcaresx=(1 2 3 4 5)) predict(outcome(2))
 
-*spec (II): controlling for enviroment 
-oprobit dsm_cat c.adultcaresx##(i.g1_any i.g2_any i.g3_any) i.famgam  i.survey_year if samp_main==1, vce(robust)
+* Spec III: family environment
+oprobit dsm_cat c.adultcaresx##(i.g1_any i.g2_any i.g3_any) ///
+    i.famgam_yes i.survey_year ///
+    [pw=survey_weight_pool] if samp_ord == 1, vce(robust)
 margins, dydx(g1_any g2_any g3_any) at(adultcaresx=(1 2 3 4 5)) predict(outcome(0))
 margins, dydx(g1_any g2_any g3_any) at(adultcaresx=(1 2 3 4 5)) predict(outcome(1))
 margins, dydx(g1_any g2_any g3_any) at(adultcaresx=(1 2 3 4 5)) predict(outcome(2))
 
-*spec (III): controlling for motives 
-oprobit dsm_cat c.adultcaresx##(i.g1_any i.g2_any i.g3_any) i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year if samp_main==1, vce(robust)
+* Spec IV: motives
+oprobit dsm_cat c.adultcaresx##(i.g1_any i.g2_any i.g3_any) ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year ///
+    [pw=survey_weight_pool] if samp_ord == 1, vce(robust)
 margins, dydx(g1_any g2_any g3_any) at(adultcaresx=(1 2 3 4 5)) predict(outcome(0))
 margins, dydx(g1_any g2_any g3_any) at(adultcaresx=(1 2 3 4 5)) predict(outcome(1))
 margins, dydx(g1_any g2_any g3_any) at(adultcaresx=(1 2 3 4 5)) predict(outcome(2))
 
-*spec (IV): controlling for all 
-oprobit dsm_cat c.adultcaresx##(i.g1_any i.g2_any i.g3_any) c.Exactage i.gender i.Ethnicity i.imd i.famgam i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year if samp_main==1, vce(robust)
+* Spec V: full model
+oprobit dsm_cat c.adultcaresx##(i.g1_any i.g2_any i.g3_any) ///
+    c.Exactage i.gender i.Ethnicity i.imd i.famgam_yes ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year ///
+    [pw=survey_weight_pool] if samp_ord == 1, vce(robust)
 margins, dydx(g1_any g2_any g3_any) at(adultcaresx=(1 2 3 4 5)) predict(outcome(0))
 margins, dydx(g1_any g2_any g3_any) at(adultcaresx=(1 2 3 4 5)) predict(outcome(1))
 margins, dydx(g1_any g2_any g3_any) at(adultcaresx=(1 2 3 4 5)) predict(outcome(2))
 
+*-------------------------------------------------------------------------------
+* 16. Save final analysis dataset
+*-------------------------------------------------------------------------------
+save "${processed}/ypgs_2022_2024_common_analysis.dta", replace
 
-/*
-*------------------------------------------------------------
-* Make sure missing flags don't silently drop observations
-* (safe if missings are only non-asked routing)
-*------------------------------------------------------------
-replace g1_any = 0 if missing(g1_any) & samp_main==1
-replace g2_any = 0 if missing(g2_any) & samp_main==1
-replace g3_any = 0 if missing(g3_any) & samp_main==1
+* Optional log close
+* log close
 
-*------------------------------------------------------------
-* Create 0–7 combo categories (overlapping structure preserved)
-*------------------------------------------------------------
-gen byte g_combo = .
-replace g_combo = 0 if g1_any==0 & g2_any==0 & g3_any==0
-replace g_combo = 1 if g1_any==1 & g2_any==0 & g3_any==0   // Arcade only  (THIS will be base)
-replace g_combo = 2 if g1_any==0 & g2_any==1 & g3_any==0   // Informal only
-replace g_combo = 3 if g1_any==0 & g2_any==0 & g3_any==1   // Regulated only
-replace g_combo = 4 if g1_any==1 & g2_any==1 & g3_any==0   // Arcade + Informal
-replace g_combo = 5 if g1_any==1 & g2_any==0 & g3_any==1   // Arcade + Regulated
-replace g_combo = 6 if g1_any==0 & g2_any==1 & g3_any==1   // Informal + Regulated
-replace g_combo = 7 if g1_any==1 & g2_any==1 & g3_any==1   // All three
-
-label define g_combo 0 "None" 1 "Arcade only (g1)" 2 "Informal only (g2)" 3 "Regulated only (g3)" ///
-                    4 "g1+g2" 5 "g1+g3" 6 "g2+g3" 7 "g1+g2+g3", replace
-label values g_combo g_combo
-
-*------------------------------------------------------------
-* Regression with Arcade-only as the omitted (base) category
-*------------------------------------------------------------
-reg dsm_total ib1.g_combo i.survey_year if samp_main==1, vce(robust)
-*/
-
-
-*--------------------------------------------------------------*
-* 5) Save
-*--------------------------------------------------------------*
-
-save "${processed}/ypgs_2022_2024_pooled.dta", replace
-
-*log close 
 *===============================================================================
-*end of do file
+* End of do-file
 *===============================================================================

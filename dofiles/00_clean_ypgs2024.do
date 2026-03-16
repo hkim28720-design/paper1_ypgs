@@ -1,5 +1,5 @@
 /****************************************************************************************
- 00_clean_ypgs2024_3.do
+ 00_clean_ypgs2024.do
  Author   : Kevin Kim
  Project  : Young People and Gambling Survey (YPGS) – Paper 1
  Purpose  : Clean wave 3 (2024) data and confirm alignment with 2022/2023 standard
@@ -7,13 +7,19 @@
  Data out : ypgs2024_clean.dta
 ****************************************************************************************/
 
-version 18.0
-clear all
-set more off
-
 *---------------------------------------------------------------*
 * 0. set up
 *---------------------------------------------------------------*
+
+version 18.0
+clear
+set more off
+
+capture confirm file "${raw}/ypgs2024.dta"
+if _rc != 0 {
+    di as error "File not found: ${raw}/ypgs2024.dta"
+    exit 601
+}
 
 use "${raw}/ypgs2024.dta", clear
 
@@ -31,7 +37,8 @@ tab gender, missing
 tab Ethnicity, missing
 tab region, missing
 
-* confirm key variables exists in the 2024ygps
+* inspect whether key variables are present in the 2024 YPGS
+
 lookfor Exactage gender Ethnicity region imd famgam
 lookfor gamspend4smc
 lookfor preocc escape withd tolernce losscon
@@ -49,10 +56,11 @@ lookfor fruittype fruitwhere
 lookfor School_ID
 lookfor weight0
 lookfor serial
+lookfor yearq
 
 
 *---------------------------------------------------------------*
-* 2. cleaning – we standardised the other survey wave variables to the 2024ygps
+* 2. confirm and harmonise 2024 variables to the common pooled schema
 *---------------------------------------------------------------*
 
 * 2-1. Last 12 months gambling spend variables (gamspend4smc1–18)
@@ -95,20 +103,78 @@ describe fruittype1 fruittype2 fruittype3 fruittype4 ///
          fruittype15 fruittype16 fruittype17 fruittype18 ///
          fruitwhere
 
-* 2-6. Rename variables match with 2022 2023
-rename School_ID schoolid
+* 2-6. Harmonise identifier names to the common pooled schema
+capture confirm variable schoolid
+local has_schoolid = (_rc == 0)
 
+capture confirm variable School_ID
+local has_School_ID = (_rc == 0)
 
-* 2-7. rename sample weight
-rename weight0			survey_weight
+if `has_School_ID' & !`has_schoolid' {
+    rename School_ID schoolid
+}
 
+if `has_School_ID' & `has_schoolid' {
+    di as error "Both School_ID and schoolid exist. Resolve duplicate identifier names before continuing."
+    exit 111
+}
+
+capture confirm variable schoolid
+if _rc != 0 {
+    di as error "No school identifier found: neither School_ID nor schoolid exists"
+    exit 112
+}
+
+* 2-7. Harmonise sample weight name to common pooled schema
+capture confirm variable survey_weight
+local has_survey_weight = (_rc == 0)
+
+capture confirm variable weight0
+local has_weight0 = (_rc == 0)
+
+if `has_weight0' & !`has_survey_weight' {
+    rename weight0 survey_weight
+}
+
+if `has_weight0' & `has_survey_weight' {
+    di as error "Both weight0 and survey_weight exist. Resolve duplicate weight names before continuing."
+    exit 113
+}
+
+capture confirm variable survey_weight
+if _rc != 0 {
+    di as error "No survey weight found: neither weight0 nor survey_weight exists"
+    exit 114
+}
 
 *---------------------------------------------------------------*
-* 3. Generate survey year dummy and save data for pooling
+* 3. QA
 *---------------------------------------------------------------*
 
-generate survey_year = 2024
-label var survey_year "YPGS survey year (2024 wave)"
+describe Exactage gender Ethnicity region imd famgam
+describe schoolid survey_weight
+describe fruittype1 fruittype2 fruittype3 fruittype4 ///
+         fruittype5 fruittype6 fruittype7 fruittype8 fruittype9 ///
+         fruittype15 fruittype16 fruittype17 fruittype18 ///
+         fruitwhere
+
+summarize Exactage survey_weight
+tab gender, missing
+tab Ethnicity, missing
+tab famgam, missing
+tab impulsivity, missing
+tab fruitwhere, missing
+
+count if missing(schoolid)
+count if missing(survey_weight)
+summarize survey_weight, detail
+
+*---------------------------------------------------------------*
+* 4. Generate survey year dummy and save data for pooling
+*---------------------------------------------------------------*
+
+generate int survey_year = 2024
+label var survey_year "YPGS survey year"
 
 save "${processed}/ypgs2024_clean.dta", replace
 

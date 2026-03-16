@@ -1,5 +1,5 @@
 /****************************************************************************************
- 00_clean_ypgs2022_1.do
+ 00_clean_ypgs2022.do
  Author   : Kevin Kim
  Project  : Young People and Gambling Survey (YPGS) – Paper 1
  Purpose  : Clean wave 1 (2022) data and harmonise variable names to 2024 standard
@@ -7,13 +7,20 @@
  Data out : ypgs2022_clean.dta
 ****************************************************************************************/
 
-version 18.0
-clear all
-set more off
 
 *---------------------------------------------------------------*
 * 0. set up
 *---------------------------------------------------------------*
+
+version 18.0
+clear
+set more off
+
+capture confirm file "${raw}/ypgs2022.dta"
+if _rc != 0 {
+    di as error "File not found: ${raw}/ypgs2022.dta"
+    exit 601
+}
 
 use "${raw}/ypgs2022.dta", clear
 
@@ -49,6 +56,7 @@ lookfor gc_fruittype gc_fruitwhere
 lookfor schoolid
 lookfor weight0
 lookfor  serial
+lookfor yearq
 
 
 *---------------------------------------------------------------*
@@ -218,8 +226,27 @@ rename gc_fruitwhere   fruitwhere
 *-----------------------------*
 * 2-13. rename sample weight
 *-----------------------------*
+capture confirm variable survey_weight
+local has_survey_weight = (_rc == 0)
 
-rename weight0			survey_weight
+capture confirm variable weight0
+local has_weight0 = (_rc == 0)
+
+if `has_weight0' & !`has_survey_weight' {
+    rename weight0 survey_weight
+}
+
+if `has_weight0' & `has_survey_weight' {
+    di as error "Both weight0 and survey_weight exist. Resolve duplicate weight names before continuing."
+    exit 113
+}
+
+capture confirm variable survey_weight
+if _rc != 0 {
+    di as error "No survey weight found: neither weight0 nor survey_weight exists"
+    exit 114
+}
+
 
 *---------------------------------------------------------------*
 * 3. QA – quality check
@@ -249,13 +276,22 @@ describe fruittype1 fruittype2 fruittype3 fruittype4 ///
          fruittype15 fruittype16 fruittype17 fruittype18 ///
          fruitwhere
 
+summarize Exactage survey_weight
+tab Ethnicity, missing
+tab famgam, missing
+tab preocc, missing
+tab fruitwhere, missing
+
+count if missing(schoolid)
+count if missing(survey_weight)
+summarize survey_weight, detail
 
 *---------------------------------------------------------------*
 * 4. Generate survey year dummy and save data for pooling
 *---------------------------------------------------------------*
 
-generate survey_year = 2022
-label var survey_year "YPGS survey year (2022 wave)"
+generate int survey_year = 2022
+label var survey_year "YPGS survey year"
 
 * save cleaned dataset
 save "${processed}/ypgs2022_clean.dta", replace
