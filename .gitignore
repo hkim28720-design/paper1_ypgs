@@ -1,0 +1,30 @@
+# macOS
+.DS_Store
+
+# Stata logs and temporary files
+*.smcl
+*.log
+*.stswp
+*.tmp
+
+# Output folders
+output/tables/*
+output/figures/*
+log/*
+
+# Keep folders tracked
+!output/tables/.gitkeep
+!output/figures/.gitkeep
+!log/.gitkeep
+
+# Data files
+data/raw/*
+data/processed/*
+
+# Keep README placeholders inside data folders
+!data/raw/README.md
+!data/processed/README.md
+
+# Optional: allow tiny example files only
+#!data/raw/example_*.dta
+#!data/processed/example_*.dta
