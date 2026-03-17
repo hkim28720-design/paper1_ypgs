@@ -58,6 +58,8 @@ do "${dofiles}/04_construct_groups.do"
 * 5. Main analysis
 *--------------------------------------------------------------*
 do "${dofiles}/05_analysis_main.do"
+do "${dofiles}/06_analysis_mvprobit.do"
+
 
 *log close
 display "Pipeline completed successfully."
