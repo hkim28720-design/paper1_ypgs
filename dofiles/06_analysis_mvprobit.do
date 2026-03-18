@@ -3,21 +3,18 @@ Project: Family, Motivation and Harm
 Data: YPGS 2022–2024 pooled from common comparable population
 Do file name: 06_analysis_mvprobit.do
 Authors: Kim, Stowasser, Newall
-Date created: 17 Mar 2026
+Date created: 18 Mar 2026
 Version: 1
 
 Purpose:
-- Estimate joint participation models for overlapping gambling groups
-- Model g1_any, g2_any, and g3_any simultaneously
-- Use the RQ1 sample from the common comparable population
-- Treat this as an auxiliary dependence model complementing 05_analysis_main.do
+- Estimate joint participation in overlapping gambling domains
+- Use a trivariate multivariate probit model for g1_any g2_any g3_any
+- Allow unobserved determinants of gambling-domain participation to correlate
+- Provide a joint alternative to separate probit models
 
-Important notes:
-- mvprobit is used here to model correlated participation propensities across
-  overlapping gambling groups.
-- This joint model is not the main weighted survey-design estimator.
-- The main participation results should still be anchored in 05_analysis_main.do.
-- This file is best treated as a dependence / robustness appendix model.
+Important:
+- This do-file requires the user-written command mvprobit
+- If mvprobit is not installed, the do-file exits with a clear message
 *******************************************************************************/
 
 *-------------------------------------------------------------------------------
@@ -36,7 +33,17 @@ cap mkdir "fig"
 * log using "log/06_analysis_mvprobit.log", replace text
 
 *-------------------------------------------------------------------------------
-* 1. Confirm analysis-ready file exists and load data
+* 1. Confirm mvprobit is available
+*-------------------------------------------------------------------------------
+capture which mvprobit
+if _rc != 0 {
+    di as error "The command mvprobit is not installed."
+    di as error "Install it before running this do-file, or switch to a fallback strategy."
+    exit 199
+}
+
+*-------------------------------------------------------------------------------
+* 2. Load analysis-ready file
 *-------------------------------------------------------------------------------
 capture confirm file "${processed}/ypgs_2022_2024_common_analysis.dta"
 if _rc != 0 {
@@ -47,34 +54,15 @@ if _rc != 0 {
 use "${processed}/ypgs_2022_2024_common_analysis.dta", clear
 
 *-------------------------------------------------------------------------------
-* 2. Confirm required variables exist
+* 3. Confirm required variables exist
 *-------------------------------------------------------------------------------
-capture confirm variable samp_rq1
-if _rc != 0 {
-    di as error "Variable samp_rq1 not found. Run 05_analysis_main.do first."
-    exit 111
-}
-
-capture confirm variable g1_any
-if _rc != 0 {
-    di as error "Variable g1_any not found."
-    exit 112
-}
-
-capture confirm variable g2_any
-if _rc != 0 {
-    di as error "Variable g2_any not found."
-    exit 113
-}
-
-capture confirm variable g3_any
-if _rc != 0 {
-    di as error "Variable g3_any not found."
-    exit 114
-}
+describe g1_any g2_any g3_any ///
+         Exactage gender Ethnicity imd famgam_yes adultcaresx ///
+         Motive1 Motive2 Motive3 Motive4 Motive5 ///
+         survey_year school_cluster w_rq1 samp_rq1
 
 *-------------------------------------------------------------------------------
-* 3. Restrict to RQ1 sample
+* 4. Keep participation sample only
 *-------------------------------------------------------------------------------
 keep if samp_rq1 == 1
 
@@ -82,85 +70,43 @@ assert problem1 == 1
 assert !missing(g1_any, g2_any, g3_any)
 assert !missing(Exactage, gender, Ethnicity, imd, famgam_yes, adultcaresx)
 assert !missing(Motive1, Motive2, Motive3, Motive4, Motive5)
+assert !missing(school_cluster)
+assert !missing(w_rq1)
+assert w_rq1 > 0
 
-count
 tab survey_year, missing
 
 *-------------------------------------------------------------------------------
-* 4. Sample diagnostics
+* 5. Descriptive overlap diagnostics
 *-------------------------------------------------------------------------------
-tab g1_any, missing
-tab g2_any, missing
-tab g3_any, missing
+mean g1_any g2_any g3_any [pw=w_rq1], over(survey_year)
+
+egen byte overlap_count = rowtotal(g1_any g2_any g3_any)
+label var overlap_count "Number of gambling domains participated in"
+tab overlap_count, missing
 
 corr g1_any g2_any g3_any
 
 *-------------------------------------------------------------------------------
-* 5. Joint participation model: demographics only
+* 6. Benchmark separate probits for comparison
 *-------------------------------------------------------------------------------
-mvprobit ///
-    (g1_any = c.Exactage i.gender i.Ethnicity i.imd i.survey_year) ///
-    (g2_any = c.Exactage i.gender i.Ethnicity i.imd i.survey_year) ///
-    (g3_any = c.Exactage i.gender i.Ethnicity i.imd i.survey_year), ///
-    dr(200)
+probit g1_any c.Exactage i.gender i.Ethnicity i.imd ///
+    i.famgam_yes i.adultcaresx ///
+    i.Motive1 i.Motive2 i.Motive3 i.Motive4 i.Motive5 ///
+    i.survey_year [pw=w_rq1], vce(cluster school_cluster)
 
-estimates store mvp_demo
+probit g2_any c.Exactage i.gender i.Ethnicity i.imd ///
+    i.famgam_yes i.adultcaresx ///
+    i.Motive1 i.Motive2 i.Motive3 i.Motive4 i.Motive5 ///
+    i.survey_year [pw=w_rq1], vce(cluster school_cluster)
 
-* Marginal effects: demographics-only model
-margins, dydx(Exactage) predict(pr eq(#1))
-margins, dydx(Exactage) predict(pr eq(#2))
-margins, dydx(Exactage) predict(pr eq(#3))
-
-*-------------------------------------------------------------------------------
-* 6. Joint participation model: family environment only
-*-------------------------------------------------------------------------------
-mvprobit ///
-    (g1_any = i.famgam_yes i.adultcaresx i.survey_year) ///
-    (g2_any = i.famgam_yes i.adultcaresx i.survey_year) ///
-    (g3_any = i.famgam_yes i.adultcaresx i.survey_year), ///
-    dr(200)
-
-estimates store mvp_family
-
-* Marginal effects: family exposure
-margins, dydx(famgam_yes) predict(pr eq(#1))
-margins, dydx(famgam_yes) predict(pr eq(#2))
-margins, dydx(famgam_yes) predict(pr eq(#3))
+probit g3_any c.Exactage i.gender i.Ethnicity i.imd ///
+    i.famgam_yes i.adultcaresx ///
+    i.Motive1 i.Motive2 i.Motive3 i.Motive4 i.Motive5 ///
+    i.survey_year [pw=w_rq1], vce(cluster school_cluster)
 
 *-------------------------------------------------------------------------------
-* 7. Joint participation model: motives only
-*-------------------------------------------------------------------------------
-mvprobit ///
-    (g1_any = i.Motive1 i.Motive2 i.Motive3 i.Motive4 i.Motive5 i.survey_year) ///
-    (g2_any = i.Motive1 i.Motive2 i.Motive3 i.Motive4 i.Motive5 i.survey_year) ///
-    (g3_any = i.Motive1 i.Motive2 i.Motive3 i.Motive4 i.Motive5 i.survey_year), ///
-    dr(200)
-
-estimates store mvp_motives
-
-* Marginal effects: motives
-margins, dydx(Motive1) predict(pr eq(#1))
-margins, dydx(Motive1) predict(pr eq(#2))
-margins, dydx(Motive1) predict(pr eq(#3))
-
-margins, dydx(Motive2) predict(pr eq(#1))
-margins, dydx(Motive2) predict(pr eq(#2))
-margins, dydx(Motive2) predict(pr eq(#3))
-
-margins, dydx(Motive3) predict(pr eq(#1))
-margins, dydx(Motive3) predict(pr eq(#2))
-margins, dydx(Motive3) predict(pr eq(#3))
-
-margins, dydx(Motive4) predict(pr eq(#1))
-margins, dydx(Motive4) predict(pr eq(#2))
-margins, dydx(Motive4) predict(pr eq(#3))
-
-margins, dydx(Motive5) predict(pr eq(#1))
-margins, dydx(Motive5) predict(pr eq(#2))
-margins, dydx(Motive5) predict(pr eq(#3))
-
-*-------------------------------------------------------------------------------
-* 8. Joint participation model: full specification
+* 7. Trivariate multivariate probit
 *-------------------------------------------------------------------------------
 mvprobit ///
     (g1_any = c.Exactage i.gender i.Ethnicity i.imd ///
@@ -174,69 +120,53 @@ mvprobit ///
     (g3_any = c.Exactage i.gender i.Ethnicity i.imd ///
               i.famgam_yes i.adultcaresx ///
               i.Motive1 i.Motive2 i.Motive3 i.Motive4 i.Motive5 ///
-              i.survey_year), ///
-    dr(200)
-
-estimates store mvp_full
+              i.survey_year) ///
+    [pw=w_rq1], vce(cluster school_cluster)
 
 *-------------------------------------------------------------------------------
-* 9. Marginal effects from full model
+* 8. Key postestimation interpretation
 *-------------------------------------------------------------------------------
 
-* Age
-margins, dydx(Exactage) predict(pr eq(#1))
-margins, dydx(Exactage) predict(pr eq(#2))
-margins, dydx(Exactage) predict(pr eq(#3))
+* Test whether cross-equation correlations are jointly zero
+test [atrho21]_cons = 0
+test [atrho31]_cons = 0
+test [atrho32]_cons = 0
+test ([atrho21]_cons = 0) ([atrho31]_cons = 0) ([atrho32]_cons = 0)
 
-* Family gambling exposure
-margins, dydx(famgam_yes) predict(pr eq(#1))
-margins, dydx(famgam_yes) predict(pr eq(#2))
-margins, dydx(famgam_yes) predict(pr eq(#3))
-
-* Motives
-margins, dydx(Motive1) predict(pr eq(#1))
-margins, dydx(Motive1) predict(pr eq(#2))
-margins, dydx(Motive1) predict(pr eq(#3))
-
-margins, dydx(Motive2) predict(pr eq(#1))
-margins, dydx(Motive2) predict(pr eq(#2))
-margins, dydx(Motive2) predict(pr eq(#3))
-
-margins, dydx(Motive3) predict(pr eq(#1))
-margins, dydx(Motive3) predict(pr eq(#2))
-margins, dydx(Motive3) predict(pr eq(#3))
-
-margins, dydx(Motive4) predict(pr eq(#1))
-margins, dydx(Motive4) predict(pr eq(#2))
-margins, dydx(Motive4) predict(pr eq(#3))
-
-margins, dydx(Motive5) predict(pr eq(#1))
-margins, dydx(Motive5) predict(pr eq(#2))
-margins, dydx(Motive5) predict(pr eq(#3))
-
-* Adult care: report predicted probabilities by category
-margins adultcaresx, predict(pr eq(#1))
-margins adultcaresx, predict(pr eq(#2))
-margins adultcaresx, predict(pr eq(#3))
+* Display estimated latent-error correlations
+di as text "Estimated cross-equation correlations:"
+di as result "rho21 = " %6.4f tanh(_b[/atrho21])
+di as result "rho31 = " %6.4f tanh(_b[/atrho31])
+di as result "rho32 = " %6.4f tanh(_b[/atrho32])
 
 *-------------------------------------------------------------------------------
-* 10. Residual correlation diagnostics
+* 9. Test whether cross-equation correlations matter
 *-------------------------------------------------------------------------------
-* After mvprobit, Stata reports the cross-equation correlations (rho terms).
-* These are central for showing whether participation propensities are correlated.
+* These parameter names may differ slightly by mvprobit version.
+* Inspect ereturn list and coefficient names if needed.
 
-* Replay full model estimates to inspect rho terms clearly
-estimates replay mvp_full
+matrix list e(b)
+
+* Common hypotheses:
+* rho21 = 0
+* rho31 = 0
+* rho32 = 0
+*
+* Uncomment and adapt if coefficient names differ in your installed version.
+*
+* test [athrho21]_cons = 0
+* test [athrho31]_cons = 0
+* test [athrho32]_cons = 0
+* test ([athrho21]_cons = 0) ([athrho31]_cons = 0) ([athrho32]_cons = 0)
 
 *-------------------------------------------------------------------------------
-* 11. Save estimates for later table construction if needed
+* 10. Save estimation sample
 *-------------------------------------------------------------------------------
-* Example only; uncomment if you want to save estimates
-* estimates save "${processed}/mvp_full_estimates", replace
+save "${processed}/ypgs_2022_2024_mvprobit_sample.dta", replace
 
 * Optional log close
 * log close
 
-*===============================================================================
-* End of do-file
-*===============================================================================
+/*******************************************************************************
+End of do-file
+*******************************************************************************/
