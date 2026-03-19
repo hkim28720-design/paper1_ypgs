@@ -4,7 +4,7 @@ Data: YPGS 2022–2024 pooled from common comparable population
 Do file name: 05_analysis_main.do
 Authors: Kim, Stowasser, Newall
 Date created: 16 Mar 2026
-Date edited: 18 Mar 2026
+Date edited: 19 Mar 2026
 Version: 8
 
 Purpose:
@@ -12,27 +12,31 @@ Purpose:
 - Define analysis samples for participation and harm models
 - Construct sample-specific equal-wave pooled weights
 - Cluster standard errors at the wave-specific school level
-- Report weighted prevalence of gambling per se and overlap across domains
-- Estimate benchmark single-equation participation models
-- Estimate harm models among gamblers only
-- Estimate pooled and stratified moderation robustness models
+- Run main descriptive statistics and regression models
 
 Key design choices:
 - Restrict to survey_year 2022, 2023, and 2024
 - Restrict to samp_common == 1
-- Participation models use overlapping group indicators g1_any g2_any g3_any
-- Harm models exclude non-gamblers by design
-- Use sample-specific renormalized pooled weights derived from survey_weight_pool
-- Treat adultcaresx as categorical
-- Cluster standard errors at the wave-specific school level
-- Full survey-design inference is not implemented here
+- RQ1 uses gamblers with complete covariates, motives, and group flags
+- RQ2–RQ5 use gamblers with observed DSM outcomes plus complete covariates
+- Use sample-specific renormalized pooled weights derived from survey_weight_pool:
+    w_rq1  for participation models
+    w_main for harm models
+    w_ord  for ordered-outcome models
+- In nonlinear models, interpret interactions via margins, not raw coefficients
+- adultcaresx is treated as categorical, not continuous
+- Standard errors are clustered at the wave-specific school level
+- Full survey-design inference is not implemented here; inference uses pooled
+  equal-wave weights plus clustering at the wave-specific school level
+- Observations with missing schoolid are excluded from regression samples because
+  cluster-robust inference is implemented at the wave-specific school level
 *******************************************************************************/
 
 *-------------------------------------------------------------------------------
 * 0. Set up
 *-------------------------------------------------------------------------------
 version 18
-clear
+clear all
 set more off
 set linesize 120
 
@@ -102,27 +106,45 @@ if _rc != 0 {
 }
 
 * adultcaresx:
-* 1 Very well
-* 2 Fairly well
-* 3 Not very well
-* 4 Not at all
-* 5 No adult at home
+* 1 Strongly agree
+* 2 Agree
+* 3 Neither agree nor disagree
+* 4 Disagree
+* 5 Strongly disagree
 * 6 Don't know
 * 7 Prefer not to say
 * 8 Not stated
 recode adultcaresx (6=.) (7=.) (8=.)
-label define adultcare_lbl 1 "Very well" 2 "Fairly well" 3 "Not very well" 4 "Not at all" 5 "No adult at home", replace
+label define adultcare_lbl ///
+    1 "Strongly agree" ///
+    2 "Agree" ///
+    3 "Neither agree nor disagree" ///
+    4 "Disagree" ///
+    5 "Strongly disagree", replace
 label values adultcaresx adultcare_lbl
-label var adultcaresx "Perceived adult care at home (higher = less care)"
+label var adultcaresx "Adult care at home"
 
 * gender:
-* 1 boy
-* 2 girl
-* 3 in another way
-* 4 prefer not to say
-* 5 not stated / not answered
-recode gender (4=.) (5=.)
-label var gender "Gender"
+* Raw categories differ slightly across waves.
+* 2022: 1 Boy/male, 2 Girl/female, 3 In another way, 4 Prefer not to say
+* 2023: 1 Boy/male, 2 Girl/female, 3 Other, 4 Prefer not to say
+* 2024: 1 Boy/male, 2 Girl/female, 3 Non-binary, 4 My gender is not listed, 5 Prefer not to say
+*
+* Final harmonization:
+* keep only boy/male and girl/female
+* code all other responses as missing
+recode gender (3=.) (4=.) (5=.)
+label define gender_analysis_lbl 1 "Boy/male" 2 "Girl/female", replace
+label values gender gender_analysis_lbl
+label var gender "Gender (boy/male or girl/female only)"
+
+capture drop female
+generate byte female = .
+replace female = 1 if gender == 2
+replace female = 0 if gender == 1
+label define female_lbl 0 "Boy/male" 1 "Girl/female", replace
+label values female female_lbl
+label var female "Girl/female"
 
 * family gambling exposure:
 * 1 yes
@@ -143,16 +165,9 @@ label var famgam_yes "Family gambling exposure"
 recode Ethnicity (6=.)
 label var Ethnicity "Ethnicity"
 
-* meaningful motive labels
-label var Motive1 "Monetary or quick-fix motive"
-label var Motive2 "Entertainment motive"
-label var Motive3 "Social-presence motive"
-label var Motive4 "Cognitive motive"
-label var Motive5 "Boredom motive"
-
 *-------------------------------------------------------------------------------
 * 6. Cluster identifier
-*    Missing schoolid stays missing and is excluded from regression samples
+*    Missing schoolid must remain missing, not be assigned a cluster code
 *-------------------------------------------------------------------------------
 count if missing(schoolid)
 
@@ -170,19 +185,8 @@ count if missing(school_cluster)
 tab survey_year if missing(schoolid), missing
 
 *-------------------------------------------------------------------------------
-* 7. Weighted descriptive indicators
+* 7. Create weighted descriptive indicators
 *-------------------------------------------------------------------------------
-capture drop female
-capture drop another_gender
-generate byte female = .
-replace female = 1 if gender == 2
-replace female = 0 if inlist(gender, 1, 3)
-label var female "Female"
-
-generate byte another_gender = .
-replace another_gender = 1 if gender == 3
-replace another_gender = 0 if inlist(gender, 1, 2)
-label var another_gender "Gender in another way"
 
 capture drop eth_1
 capture drop eth_2
@@ -255,31 +259,32 @@ capture drop care_5
 generate byte care_1 = .
 replace care_1 = 1 if adultcaresx == 1
 replace care_1 = 0 if inlist(adultcaresx, 2, 3, 4, 5)
-label var care_1 "Adult care very well"
+label var care_1 "Adult care: strongly agree"
 
 generate byte care_2 = .
 replace care_2 = 1 if adultcaresx == 2
 replace care_2 = 0 if inlist(adultcaresx, 1, 3, 4, 5)
-label var care_2 "Adult care fairly well"
+label var care_2 "Adult care: agree"
 
 generate byte care_3 = .
 replace care_3 = 1 if adultcaresx == 3
 replace care_3 = 0 if inlist(adultcaresx, 1, 2, 4, 5)
-label var care_3 "Adult care not very well"
+label var care_3 "Adult care: neither"
 
 generate byte care_4 = .
 replace care_4 = 1 if adultcaresx == 4
 replace care_4 = 0 if inlist(adultcaresx, 1, 2, 3, 5)
-label var care_4 "Adult care not at all"
+label var care_4 "Adult care: disagree"
 
 generate byte care_5 = .
 replace care_5 = 1 if adultcaresx == 5
 replace care_5 = 0 if inlist(adultcaresx, 1, 2, 3, 4)
-label var care_5 "No adult at home"
+label var care_5 "Adult care: strongly disagree"
 
 *-------------------------------------------------------------------------------
 * 8. Sample definitions
 *-------------------------------------------------------------------------------
+
 capture drop samp_dsm
 generate byte samp_dsm = (problem1 == 1) & !missing(dsm_total)
 label values samp_dsm LB_YN
@@ -291,7 +296,7 @@ generate byte samp_rq1 = (problem1 == 1) ///
                Motive1, Motive2, Motive3, Motive4, Motive5, ///
                g1_any, g2_any, g3_any, school_cluster, survey_weight_pool)
 label values samp_rq1 LB_YN
-label var samp_rq1 "Participation sample"
+label var samp_rq1 "RQ1 sample: gamblers with complete covariates, motives, and group flags"
 
 capture drop samp_main
 generate byte samp_main = (problem1 == 1) & !missing(dsm_total, dsm_cat) ///
@@ -299,31 +304,13 @@ generate byte samp_main = (problem1 == 1) & !missing(dsm_total, dsm_cat) ///
                Motive1, Motive2, Motive3, Motive4, Motive5, ///
                g1_any, g2_any, g3_any, school_cluster, survey_weight_pool)
 label values samp_main LB_YN
-label var samp_main "Main harm sample"
+label var samp_main "Main analytic sample: DSM-complete gamblers with complete covariates"
 
 capture drop samp_ord
 generate byte samp_ord = samp_main == 1
 label values samp_ord LB_YN
 label var samp_ord "Ordered-outcome sample"
 
-* stratified domain-specific harm samples
-capture drop samp_g1_harm
-capture drop samp_g2_harm
-capture drop samp_g3_harm
-
-generate byte samp_g1_harm = samp_main == 1 & g1_any == 1
-generate byte samp_g2_harm = samp_main == 1 & g2_any == 1
-generate byte samp_g3_harm = samp_main == 1 & g3_any == 1
-
-label values samp_g1_harm LB_YN
-label values samp_g2_harm LB_YN
-label values samp_g3_harm LB_YN
-
-label var samp_g1_harm "Harm sample among arcade gamblers"
-label var samp_g2_harm "Harm sample among informal gamblers"
-label var samp_g3_harm "Harm sample among regulated gamblers"
-
-* routing checks
 assert missing(dsm_total) if problem1 == 0
 assert missing(dsm_cat)   if problem1 == 0
 assert problem1 == 1 if !missing(dsm_total)
@@ -334,9 +321,6 @@ count if problem1 == 1
 count if samp_rq1 == 1
 count if samp_main == 1
 count if samp_ord == 1
-count if samp_g1_harm == 1
-count if samp_g2_harm == 1
-count if samp_g3_harm == 1
 
 tab survey_year if samp_rq1 == 1, missing
 tab survey_year if samp_main == 1, missing
@@ -359,20 +343,14 @@ assert `n_ord' == 3
 capture drop w_rq1
 capture drop w_main
 capture drop w_ord
-capture drop w_g1
-capture drop w_g2
-capture drop w_g3
 
 bysort survey_year: egen double sum_wp_rq1  = total(survey_weight_pool) if samp_rq1  == 1
 bysort survey_year: egen double sum_wp_main = total(survey_weight_pool) if samp_main == 1
 bysort survey_year: egen double sum_wp_ord  = total(survey_weight_pool) if samp_ord  == 1
-bysort survey_year: egen double sum_wp_g1   = total(survey_weight_pool) if samp_g1_harm == 1
-bysort survey_year: egen double sum_wp_g2   = total(survey_weight_pool) if samp_g2_harm == 1
-bysort survey_year: egen double sum_wp_g3   = total(survey_weight_pool) if samp_g3_harm == 1
 
 generate double w_rq1 = .
 replace w_rq1 = survey_weight_pool / sum_wp_rq1 * (1/3) if samp_rq1 == 1
-label var w_rq1 "Equal-wave pooled weight in participation sample"
+label var w_rq1 "Equal-wave pooled weight in RQ1 sample"
 
 generate double w_main = .
 replace w_main = survey_weight_pool / sum_wp_main * (1/3) if samp_main == 1
@@ -382,26 +360,35 @@ generate double w_ord = .
 replace w_ord = survey_weight_pool / sum_wp_ord * (1/3) if samp_ord == 1
 label var w_ord "Equal-wave pooled weight in ordered-outcome sample"
 
-generate double w_g1 = .
-replace w_g1 = survey_weight_pool / sum_wp_g1 * (1/3) if samp_g1_harm == 1
-label var w_g1 "Equal-wave pooled weight among arcade gamblers"
+drop sum_wp_rq1 sum_wp_main sum_wp_ord
 
-generate double w_g2 = .
-replace w_g2 = survey_weight_pool / sum_wp_g2 * (1/3) if samp_g2_harm == 1
-label var w_g2 "Equal-wave pooled weight among informal gamblers"
+bysort survey_year: egen double check_rq1 = total(w_rq1)
+tabstat check_rq1 if samp_rq1 == 1, by(survey_year) stat(mean)
+drop check_rq1
 
-generate double w_g3 = .
-replace w_g3 = survey_weight_pool / sum_wp_g3 * (1/3) if samp_g3_harm == 1
-label var w_g3 "Equal-wave pooled weight among regulated gamblers"
+bysort survey_year: egen double check_main = total(w_main)
+tabstat check_main if samp_main == 1, by(survey_year) stat(mean)
+drop check_main
 
-drop sum_wp_rq1 sum_wp_main sum_wp_ord sum_wp_g1 sum_wp_g2 sum_wp_g3
+bysort survey_year: egen double check_ord = total(w_ord)
+tabstat check_ord if samp_ord == 1, by(survey_year) stat(mean)
+drop check_ord
 
-assert w_rq1  > 0 if samp_rq1 == 1
+egen double total_rq1 = total(w_rq1)
+summarize total_rq1
+drop total_rq1
+
+egen double total_main = total(w_main)
+summarize total_main
+drop total_main
+
+egen double total_ord = total(w_ord)
+summarize total_ord
+drop total_ord
+
+assert w_rq1  > 0 if samp_rq1  == 1
 assert w_main > 0 if samp_main == 1
-assert w_ord  > 0 if samp_ord == 1
-assert w_g1   > 0 if samp_g1_harm == 1
-assert w_g2   > 0 if samp_g2_harm == 1
-assert w_g3   > 0 if samp_g3_harm == 1
+assert w_ord  > 0 if samp_ord  == 1
 
 *-------------------------------------------------------------------------------
 * 10. Save analysis-ready subset
@@ -412,20 +399,16 @@ save "${processed}/ypgs_2022_2024_common_analysis.dta", replace
 * 11. Descriptive statistics
 *-------------------------------------------------------------------------------
 
-* prevalence of gambling per se
 proportion problem1 [pw=survey_weight_pool], over(survey_year)
 proportion problem1 [pw=survey_weight_pool], over(Exactage)
 
-* gambling domain prevalence among gamblers
 mean g1_any g2_any g3_any [pw=w_rq1] if samp_rq1 == 1, over(survey_year)
 
-* overlap structure among gamblers with complete group information
 tab n_any_groups if problem1 == 1 & group_complete3 == 1, missing
 
-* weighted means in main harm sample by year
 mean Exactage dsm_total g1_any g2_any g3_any ///
      g0_me g1_me g2_me g3_me multi ///
-     female another_gender ///
+     female ///
      eth_1 eth_2 eth_3 eth_4 eth_5 ///
      imd_1 imd_2 imd_3 imd_4 imd_5 ///
      famgam_yes ///
@@ -445,10 +428,10 @@ tab imd survey_year if samp_main == 1, missing col
 tab adultcaresx survey_year if samp_main == 1, missing col
 
 *-------------------------------------------------------------------------------
-* 12. RQ1: Benchmark single-equation participation models
+* 12. RQ1: Who becomes which gambler? (single-equation participation models)
 *-------------------------------------------------------------------------------
 
-* Arcade
+* Arcade group
 probit g1_any c.Exactage i.gender i.Ethnicity i.imd i.survey_year ///
     [pw=w_rq1] if samp_rq1 == 1, vce(cluster school_cluster)
 margins, dydx(Exactage gender Ethnicity imd)
@@ -458,18 +441,18 @@ probit g1_any i.famgam_yes i.adultcaresx i.survey_year ///
 margins, dydx(famgam_yes)
 margins adultcaresx
 
-probit g1_any i.Motive1 i.Motive2 i.Motive3 i.Motive4 i.Motive5 i.survey_year ///
+probit g1_any i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year ///
     [pw=w_rq1] if samp_rq1 == 1, vce(cluster school_cluster)
 margins, dydx(Motive1 Motive2 Motive3 Motive4 Motive5)
 
 probit g1_any c.Exactage i.gender i.Ethnicity i.imd ///
     i.famgam_yes i.adultcaresx ///
-    i.Motive1 i.Motive2 i.Motive3 i.Motive4 i.Motive5 ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) ///
     i.survey_year [pw=w_rq1] if samp_rq1 == 1, vce(cluster school_cluster)
 margins, dydx(Exactage famgam_yes Motive1 Motive2 Motive3 Motive4 Motive5)
 margins adultcaresx
 
-* Informal
+* Informal-setting group
 probit g2_any c.Exactage i.gender i.Ethnicity i.imd i.survey_year ///
     [pw=w_rq1] if samp_rq1 == 1, vce(cluster school_cluster)
 margins, dydx(Exactage gender Ethnicity imd)
@@ -479,18 +462,18 @@ probit g2_any i.famgam_yes i.adultcaresx i.survey_year ///
 margins, dydx(famgam_yes)
 margins adultcaresx
 
-probit g2_any i.Motive1 i.Motive2 i.Motive3 i.Motive4 i.Motive5 i.survey_year ///
+probit g2_any i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year ///
     [pw=w_rq1] if samp_rq1 == 1, vce(cluster school_cluster)
 margins, dydx(Motive1 Motive2 Motive3 Motive4 Motive5)
 
 probit g2_any c.Exactage i.gender i.Ethnicity i.imd ///
     i.famgam_yes i.adultcaresx ///
-    i.Motive1 i.Motive2 i.Motive3 i.Motive4 i.Motive5 ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) ///
     i.survey_year [pw=w_rq1] if samp_rq1 == 1, vce(cluster school_cluster)
 margins, dydx(Exactage famgam_yes Motive1 Motive2 Motive3 Motive4 Motive5)
 margins adultcaresx
 
-* Regulated
+* Regulated-setting group
 probit g3_any c.Exactage i.gender i.Ethnicity i.imd i.survey_year ///
     [pw=w_rq1] if samp_rq1 == 1, vce(cluster school_cluster)
 margins, dydx(Exactage gender Ethnicity imd)
@@ -500,22 +483,21 @@ probit g3_any i.famgam_yes i.adultcaresx i.survey_year ///
 margins, dydx(famgam_yes)
 margins adultcaresx
 
-probit g3_any i.Motive1 i.Motive2 i.Motive3 i.Motive4 i.Motive5 i.survey_year ///
+probit g3_any i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year ///
     [pw=w_rq1] if samp_rq1 == 1, vce(cluster school_cluster)
 margins, dydx(Motive1 Motive2 Motive3 Motive4 Motive5)
 
 probit g3_any c.Exactage i.gender i.Ethnicity i.imd ///
     i.famgam_yes i.adultcaresx ///
-    i.Motive1 i.Motive2 i.Motive3 i.Motive4 i.Motive5 ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) ///
     i.survey_year [pw=w_rq1] if samp_rq1 == 1, vce(cluster school_cluster)
 margins, dydx(Exactage famgam_yes Motive1 Motive2 Motive3 Motive4 Motive5)
 margins adultcaresx
 
 *-------------------------------------------------------------------------------
-* 13. RQ2: Harm models among gamblers only
+* 13. RQ2: Harm regressions
 *-------------------------------------------------------------------------------
 
-* OLS
 reg dsm_total i.g1_any i.g2_any i.g3_any i.survey_year ///
     [pw=w_main] if samp_main == 1, vce(cluster school_cluster)
 
@@ -528,16 +510,15 @@ reg dsm_total i.g1_any i.g2_any i.g3_any ///
     [pw=w_main] if samp_main == 1, vce(cluster school_cluster)
 
 reg dsm_total i.g1_any i.g2_any i.g3_any ///
-    i.Motive1 i.Motive2 i.Motive3 i.Motive4 i.Motive5 i.survey_year ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year ///
     [pw=w_main] if samp_main == 1, vce(cluster school_cluster)
 
 reg dsm_total i.g1_any i.g2_any i.g3_any ///
     c.Exactage i.gender i.Ethnicity i.imd ///
     i.famgam_yes i.adultcaresx ///
-    i.Motive1 i.Motive2 i.Motive3 i.Motive4 i.Motive5 ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) ///
     i.survey_year [pw=w_main] if samp_main == 1, vce(cluster school_cluster)
 
-* Negative binomial
 nbreg dsm_total i.g1_any i.g2_any i.g3_any i.survey_year ///
     [pw=w_main] if samp_main == 1, vce(cluster school_cluster)
 margins, dydx(g1_any g2_any g3_any)
@@ -553,105 +534,107 @@ nbreg dsm_total i.g1_any i.g2_any i.g3_any ///
 margins, dydx(g1_any g2_any g3_any)
 
 nbreg dsm_total i.g1_any i.g2_any i.g3_any ///
-    i.Motive1 i.Motive2 i.Motive3 i.Motive4 i.Motive5 i.survey_year ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year ///
     [pw=w_main] if samp_main == 1, vce(cluster school_cluster)
 margins, dydx(g1_any g2_any g3_any)
 
 nbreg dsm_total i.g1_any i.g2_any i.g3_any ///
     c.Exactage i.gender i.Ethnicity i.imd ///
     i.famgam_yes i.adultcaresx ///
-    i.Motive1 i.Motive2 i.Motive3 i.Motive4 i.Motive5 ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) ///
     i.survey_year [pw=w_main] if samp_main == 1, vce(cluster school_cluster)
 margins, dydx(g1_any g2_any g3_any)
 
 *-------------------------------------------------------------------------------
 * 14. RQ3: Moderation by family gambling exposure
 *-------------------------------------------------------------------------------
+
 reg dsm_total i.g1_any##i.famgam_yes ///
     c.Exactage i.gender i.Ethnicity i.imd i.adultcaresx ///
-    i.Motive1 i.Motive2 i.Motive3 i.Motive4 i.Motive5 i.survey_year ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year ///
     [pw=w_main] if samp_main == 1, vce(cluster school_cluster)
 
 reg dsm_total i.g2_any##i.famgam_yes ///
     c.Exactage i.gender i.Ethnicity i.imd i.adultcaresx ///
-    i.Motive1 i.Motive2 i.Motive3 i.Motive4 i.Motive5 i.survey_year ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year ///
     [pw=w_main] if samp_main == 1, vce(cluster school_cluster)
 
 reg dsm_total i.g3_any##i.famgam_yes ///
     c.Exactage i.gender i.Ethnicity i.imd i.adultcaresx ///
-    i.Motive1 i.Motive2 i.Motive3 i.Motive4 i.Motive5 i.survey_year ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year ///
     [pw=w_main] if samp_main == 1, vce(cluster school_cluster)
 
 nbreg dsm_total i.g1_any##i.famgam_yes ///
     c.Exactage i.gender i.Ethnicity i.imd i.adultcaresx ///
-    i.Motive1 i.Motive2 i.Motive3 i.Motive4 i.Motive5 i.survey_year ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year ///
     [pw=w_main] if samp_main == 1, vce(cluster school_cluster)
 margins famgam_yes, dydx(g1_any)
 
 nbreg dsm_total i.g2_any##i.famgam_yes ///
     c.Exactage i.gender i.Ethnicity i.imd i.adultcaresx ///
-    i.Motive1 i.Motive2 i.Motive3 i.Motive4 i.Motive5 i.survey_year ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year ///
     [pw=w_main] if samp_main == 1, vce(cluster school_cluster)
 margins famgam_yes, dydx(g2_any)
 
 nbreg dsm_total i.g3_any##i.famgam_yes ///
     c.Exactage i.gender i.Ethnicity i.imd i.adultcaresx ///
-    i.Motive1 i.Motive2 i.Motive3 i.Motive4 i.Motive5 i.survey_year ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year ///
     [pw=w_main] if samp_main == 1, vce(cluster school_cluster)
 margins famgam_yes, dydx(g3_any)
 
 *-------------------------------------------------------------------------------
 * 15. RQ4: Moderation by adult care
 *-------------------------------------------------------------------------------
+
 reg dsm_total i.g1_any##i.adultcaresx ///
     c.Exactage i.gender i.Ethnicity i.imd i.famgam_yes ///
-    i.Motive1 i.Motive2 i.Motive3 i.Motive4 i.Motive5 i.survey_year ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year ///
     [pw=w_main] if samp_main == 1, vce(cluster school_cluster)
 
 reg dsm_total i.g2_any##i.adultcaresx ///
     c.Exactage i.gender i.Ethnicity i.imd i.famgam_yes ///
-    i.Motive1 i.Motive2 i.Motive3 i.Motive4 i.Motive5 i.survey_year ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year ///
     [pw=w_main] if samp_main == 1, vce(cluster school_cluster)
 
 reg dsm_total i.g3_any##i.adultcaresx ///
     c.Exactage i.gender i.Ethnicity i.imd i.famgam_yes ///
-    i.Motive1 i.Motive2 i.Motive3 i.Motive4 i.Motive5 i.survey_year ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year ///
     [pw=w_main] if samp_main == 1, vce(cluster school_cluster)
 
 nbreg dsm_total i.g1_any##i.adultcaresx ///
     c.Exactage i.gender i.Ethnicity i.imd i.famgam_yes ///
-    i.Motive1 i.Motive2 i.Motive3 i.Motive4 i.Motive5 i.survey_year ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year ///
     [pw=w_main] if samp_main == 1, vce(cluster school_cluster)
 margins adultcaresx, dydx(g1_any)
 
 nbreg dsm_total i.g2_any##i.adultcaresx ///
     c.Exactage i.gender i.Ethnicity i.imd i.famgam_yes ///
-    i.Motive1 i.Motive2 i.Motive3 i.Motive4 i.Motive5 i.survey_year ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year ///
     [pw=w_main] if samp_main == 1, vce(cluster school_cluster)
 margins adultcaresx, dydx(g2_any)
 
 nbreg dsm_total i.g3_any##i.adultcaresx ///
     c.Exactage i.gender i.Ethnicity i.imd i.famgam_yes ///
-    i.Motive1 i.Motive2 i.Motive3 i.Motive4 i.Motive5 i.survey_year ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year ///
     [pw=w_main] if samp_main == 1, vce(cluster school_cluster)
 margins adultcaresx, dydx(g3_any)
 
 *-------------------------------------------------------------------------------
 * 16. RQ5: Moderation by motives on DSM total
 *-------------------------------------------------------------------------------
-reg dsm_total i.g1_any##i.Motive1 i.g1_any##i.Motive2 i.g1_any##i.Motive3 i.g1_any##i.Motive4 i.g1_any##i.Motive5 ///
+
+reg dsm_total i.g1_any##i.(Motive1 Motive2 Motive3 Motive4 Motive5) ///
     c.Exactage i.gender i.Ethnicity i.imd i.famgam_yes i.adultcaresx i.survey_year ///
     [pw=w_main] if samp_main == 1, vce(cluster school_cluster)
 
-reg dsm_total i.g2_any##i.Motive1 i.g2_any##i.Motive2 i.g2_any##i.Motive3 i.g2_any##i.Motive4 i.g2_any##i.Motive5 ///
+reg dsm_total i.g2_any##i.(Motive1 Motive2 Motive3 Motive4 Motive5) ///
     c.Exactage i.gender i.Ethnicity i.imd i.famgam_yes i.adultcaresx i.survey_year ///
     [pw=w_main] if samp_main == 1, vce(cluster school_cluster)
 
-reg dsm_total i.g3_any##i.Motive1 i.g3_any##i.Motive2 i.g3_any##i.Motive3 i.g3_any##i.Motive4 i.g3_any##i.Motive5 ///
+reg dsm_total i.g3_any##i.(Motive1 Motive2 Motive3 Motive4 Motive5) ///
     c.Exactage i.gender i.Ethnicity i.imd i.famgam_yes i.adultcaresx i.survey_year ///
     [pw=w_main] if samp_main == 1, vce(cluster school_cluster)
 
-* one interacted motive at a time in nbreg for interpretability
 nbreg dsm_total i.g1_any##i.Motive1 i.Motive2 i.Motive3 i.Motive4 i.Motive5 ///
     c.Exactage i.gender i.Ethnicity i.imd i.famgam_yes i.adultcaresx i.survey_year ///
     [pw=w_main] if samp_main == 1, vce(cluster school_cluster)
@@ -728,30 +711,9 @@ nbreg dsm_total i.g3_any##i.Motive5 i.Motive1 i.Motive2 i.Motive3 i.Motive4 ///
 margins Motive5, dydx(g3_any)
 
 *-------------------------------------------------------------------------------
-* 17. Stratified robustness by gambling category
+* 17. Alternative outcome: ordered DSM category
 *-------------------------------------------------------------------------------
 
-* Arcade gamblers only
-nbreg dsm_total c.Exactage i.gender i.Ethnicity i.imd ///
-    i.famgam_yes i.adultcaresx ///
-    i.Motive1 i.Motive2 i.Motive3 i.Motive4 i.Motive5 ///
-    i.survey_year [pw=w_g1] if samp_g1_harm == 1, vce(cluster school_cluster)
-
-* Informal gamblers only
-nbreg dsm_total c.Exactage i.gender i.Ethnicity i.imd ///
-    i.famgam_yes i.adultcaresx ///
-    i.Motive1 i.Motive2 i.Motive3 i.Motive4 i.Motive5 ///
-    i.survey_year [pw=w_g2] if samp_g2_harm == 1, vce(cluster school_cluster)
-
-* Regulated gamblers only
-nbreg dsm_total c.Exactage i.gender i.Ethnicity i.imd ///
-    i.famgam_yes i.adultcaresx ///
-    i.Motive1 i.Motive2 i.Motive3 i.Motive4 i.Motive5 ///
-    i.survey_year [pw=w_g3] if samp_g3_harm == 1, vce(cluster school_cluster)
-
-*-------------------------------------------------------------------------------
-* 18. Alternative outcome: ordered DSM category
-*-------------------------------------------------------------------------------
 tab dsm_cat if samp_ord == 1, missing
 
 oprobit dsm_cat i.g1_any i.g2_any i.g3_any i.survey_year ///
@@ -775,7 +737,7 @@ margins, dydx(g1_any g2_any g3_any) predict(outcome(1))
 margins, dydx(g1_any g2_any g3_any) predict(outcome(2))
 
 oprobit dsm_cat i.g1_any i.g2_any i.g3_any ///
-    i.Motive1 i.Motive2 i.Motive3 i.Motive4 i.Motive5 i.survey_year ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year ///
     [pw=w_ord] if samp_ord == 1, vce(cluster school_cluster)
 margins, dydx(g1_any g2_any g3_any) predict(outcome(0))
 margins, dydx(g1_any g2_any g3_any) predict(outcome(1))
@@ -784,14 +746,46 @@ margins, dydx(g1_any g2_any g3_any) predict(outcome(2))
 oprobit dsm_cat i.g1_any i.g2_any i.g3_any ///
     c.Exactage i.gender i.Ethnicity i.imd ///
     i.famgam_yes i.adultcaresx ///
-    i.Motive1 i.Motive2 i.Motive3 i.Motive4 i.Motive5 ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) ///
     i.survey_year [pw=w_ord] if samp_ord == 1, vce(cluster school_cluster)
 margins, dydx(g1_any g2_any g3_any) predict(outcome(0))
 margins, dydx(g1_any g2_any g3_any) predict(outcome(1))
 margins, dydx(g1_any g2_any g3_any) predict(outcome(2))
 
-* adult care moderation in ordered outcome
+*-------------------------------------------------------------------------------
+* 18. Alternative ordered outcome: moderation by adult care
+*-------------------------------------------------------------------------------
+
 oprobit dsm_cat i.adultcaresx##(i.g1_any i.g2_any i.g3_any) i.survey_year ///
+    [pw=w_ord] if samp_ord == 1, vce(cluster school_cluster)
+margins adultcaresx, dydx(g1_any g2_any g3_any) predict(outcome(0))
+margins adultcaresx, dydx(g1_any g2_any g3_any) predict(outcome(1))
+margins adultcaresx, dydx(g1_any g2_any g3_any) predict(outcome(2))
+
+oprobit dsm_cat i.adultcaresx##(i.g1_any i.g2_any i.g3_any) ///
+    c.Exactage i.gender i.Ethnicity i.imd i.survey_year ///
+    [pw=w_ord] if samp_ord == 1, vce(cluster school_cluster)
+margins adultcaresx, dydx(g1_any g2_any g3_any) predict(outcome(0))
+margins adultcaresx, dydx(g1_any g2_any g3_any) predict(outcome(1))
+margins adultcaresx, dydx(g1_any g2_any g3_any) predict(outcome(2))
+
+oprobit dsm_cat i.adultcaresx##(i.g1_any i.g2_any i.g3_any) ///
+    i.famgam_yes i.survey_year ///
+    [pw=w_ord] if samp_ord == 1, vce(cluster school_cluster)
+margins adultcaresx, dydx(g1_any g2_any g3_any) predict(outcome(0))
+margins adultcaresx, dydx(g1_any g2_any g3_any) predict(outcome(1))
+margins adultcaresx, dydx(g1_any g2_any g3_any) predict(outcome(2))
+
+oprobit dsm_cat i.adultcaresx##(i.g1_any i.g2_any i.g3_any) ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year ///
+    [pw=w_ord] if samp_ord == 1, vce(cluster school_cluster)
+margins adultcaresx, dydx(g1_any g2_any g3_any) predict(outcome(0))
+margins adultcaresx, dydx(g1_any g2_any g3_any) predict(outcome(1))
+margins adultcaresx, dydx(g1_any g2_any g3_any) predict(outcome(2))
+
+oprobit dsm_cat i.adultcaresx##(i.g1_any i.g2_any i.g3_any) ///
+    c.Exactage i.gender i.Ethnicity i.imd i.famgam_yes ///
+    i.(Motive1 Motive2 Motive3 Motive4 Motive5) i.survey_year ///
     [pw=w_ord] if samp_ord == 1, vce(cluster school_cluster)
 margins adultcaresx, dydx(g1_any g2_any g3_any) predict(outcome(0))
 margins adultcaresx, dydx(g1_any g2_any g3_any) predict(outcome(1))
@@ -805,6 +799,6 @@ save "${processed}/ypgs_2022_2024_common_analysis.dta", replace
 * Optional log close
 * log close
 
-/*******************************************************************************
-End of do-file
-*******************************************************************************/
+*===============================================================================
+* End of do-file
+*===============================================================================
